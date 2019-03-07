@@ -1,4 +1,5 @@
 import numbers
+import warnings
 
 import torch
 from torch.autograd import Variable
@@ -102,7 +103,10 @@ class MaskTransitionToIgnoreLabel(Transform):
         assert segmentation.size(1) == 1, str(segmentation.size())
 
         # Get mask where we don't have ignore label
-        dont_ignore_labels_mask_variable = Variable(segmentation.data.clone().ne_(self.ignore_label),
+        # FIXME: volatile is ignored starting from pytorch 0.4
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            dont_ignore_labels_mask_variable = Variable(segmentation.data.clone().ne_(self.ignore_label),
                                                     requires_grad=False, volatile=True)
 
         if self.dim == 2:
@@ -130,10 +134,12 @@ class MaskTransitionToIgnoreLabel(Transform):
 
     # get the full mask tensor
     def full_mask_tensor(self, segmentation):
-        # get the individual mask for the offsets
-        masks = [self.mask_tensor_for_offset(segmentation, offset) for offset in self.offsets]
-        # Concatenate to one tensor and convert tensor to variable
-        return torch.cat(tuple(masks), 1)
+        with torch.no_grad():
+            # get the individual mask for the offsets
+            masks = [self.mask_tensor_for_offset(segmentation, offset) for offset in self.offsets]
+            # Concatenate to one tensor and convert tensor to variable
+            out = torch.cat(tuple(masks), 1)
+        return out
 
     def batch_function(self, tensors):
         assert len(tensors) == 2
