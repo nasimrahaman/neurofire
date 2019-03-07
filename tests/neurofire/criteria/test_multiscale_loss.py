@@ -1,9 +1,14 @@
 import unittest
-import vigra  # broken vigra import ...
 import torch
 from torch.autograd import Variable
 from inferno.extensions.criteria import SorensenDiceLoss
 from inferno.io.transform.base import Compose
+
+try:
+    import affogato
+    WITH_AFF = True
+except ImportError:
+    WITH_AFF = False
 
 try:
     from base_test import BaseTest
@@ -13,17 +18,17 @@ except ImportError:
 
 class TestMultiscale(BaseTest):
 
+    @unittest.skipUnless(WITH_AFF, "need affogato")
     def test_maxpool_loss(self):
         from neurofire.criteria.loss_wrapper import LossWrapper
         from neurofire.criteria.multi_scale_loss import MultiScaleLossMaxPool
-        from neurofire.transform.segmentation import Segmentation2AffinitiesFromOffsets
+        from neurofire.transform.segmentation import Segmentation2Affinities
 
         offsets = [(1, 0, 0), (0, 1, 0), (0, 0, 1),
                    (9, 0, 0), (0, 9, 0), (0, 0, 9)]
 
         shape = (128, 128, 128)
-        aff_trafo = Segmentation2AffinitiesFromOffsets(3, offsets, retain_segmentation=False,
-                                                       add_singleton_channel_dimension=True)
+        aff_trafo = Segmentation2Affinities(offsets, retain_segmentation=False)
         seg = self.make_segmentation_with_ignore(shape)
 
         target = Variable(torch.Tensor(aff_trafo(seg.astype('float32'))[None]),
@@ -34,7 +39,8 @@ class TestMultiscale(BaseTest):
         predictions = []
         for scale in range(4):
             pshape = tuple(tshape[:2],) + shape
-            predictions.append(Variable(torch.Tensor(*pshape).uniform_(0, 1), requires_grad=True))
+            predictions.append(Variable(torch.Tensor(*pshape).uniform_(0, 1),
+                                        requires_grad=True))
             shape = tuple(sh // 2 for sh in shape)
 
         criterion = LossWrapper(SorensenDiceLoss())
@@ -72,7 +78,8 @@ class TestMultiscale(BaseTest):
         predictions = []
         for scale in range(4):
             pshape = (tshape[0], tshape[1] - 1) + shape
-            predictions.append(Variable(torch.Tensor(*pshape).uniform_(0, 1), requires_grad=True))
+            predictions.append(Variable(torch.Tensor(*pshape).uniform_(0, 1),
+                                        requires_grad=True))
             shape = tuple(sh // 2 for sh in shape)
 
         trafos = Compose(MaskTransitionToIgnoreLabel(offsets, ignore_label=0),

@@ -1,4 +1,4 @@
-# This model was taken from https://github.com/xlliu7/hed.pytorch
+# Adapted from https://github.com/xlliu7/hed.pytorch
 
 import torch.nn as nn
 import torch
@@ -7,141 +7,86 @@ from inferno.extensions.layers.convolutional import ConvELU2D, ConvELU3D
 from inferno.extensions.layers.convolutional import Conv2D, Conv3D
 from inferno.extensions.layers.sampling import AnisotropicPool, AnisotropicUpsample
 
-# def crop(d, g):
-#     g_h, g_w = g.size()[2:4]
-#     d_h, d_w = d.size()[2:4]
-#     d1 = d[:, :, int(math.floor((d_h - g_h)/2.0)):
-#                  int(math.floor((d_h - g_h)/2.0)) + g_h,
-#                  int(math.floor((d_w - g_w)/2.0)):int(math.floor((d_w - g_w)/2.0)) + g_w]
-#     return d1
 
-
-# conv relu with VALID padding
-class DefaultConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel=3, dilation=1):
-        super(DefaultConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel,
-                              padding=dilation, dilation=dilation)
-        self.activation = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        return self.activation(self.conv(x))
-
-
-# conv relu with VALID padding in 3D
-class DefaultConv3D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel=3, dilation=1):
-        super(DefaultConv3D, self).__init__()
-        self.conv = nn.Conv3d(in_channels, out_channels, kernel,
-                              padding=dilation, dilation=dilation)
-        self.activation = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        return self.activation(self.conv(x))
-
-
+# TODO for 3d it might be benefitial to go back to 2 convs for the first 2 layers
 # NOTE we use 3 convolutions for all blocks
 # in the initial implementations, the first 2 blocks only
 # consist of 2 convolutions
-class DefaultHEDBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, conv_type, dilation=1, with_maxpool=True):
-        super(DefaultHEDBlock, self).__init__()
-        self.conv = nn.Sequential(conv_type(in_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation))
-        self.with_maxpool = with_maxpool
-        if self.with_maxpool:
-            pooling_stride = 1 if dilation > 1 else 2
-            ceil_mode = False if dilation > 1 else True
-            self.pooler = nn.MaxPool2d(2, stride=pooling_stride, ceil_mode=ceil_mode)
+class BaseHEDBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, conv_type1, conv_type2, conv_type3,
+                 dilation=1, kernel=3):
+        super(BaseHEDBlock, self).__init__()
+        self.conv = nn.Sequential(conv_type1(in_channels, out_channels, kernel),
+                                  conv_type2(out_channels, out_channels, kernel),
+                                  conv_type3(out_channels, out_channels, kernel))
 
     def forward(self, x):
-        if self.with_maxpool:
-            return self.conv(self.pooler(x))
-        else:
-            return self.conv(x)
+        return self.conv(x)
 
 
-# NOTE we use 3 convolutions for all blocks
-# in the initial implementations, the first 2 blocks only
-# consist of 2 convolutions
-class DefaultHEDBlock3D(nn.Module):
-    def __init__(self, in_channels, out_channels, conv_type, dilation=1, with_maxpool=True):
-        super(DefaultHEDBlock3D, self).__init__()
-        self.conv = nn.Sequential(conv_type(in_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation))
-        self.with_maxpool = with_maxpool
-        if self.with_maxpool:
-            pooling_stride = 1 if dilation > 1 else 2
-            ceil_mode = False if dilation > 1 else True
-            self.pooler = nn.MaxPool3d(2, stride=pooling_stride, ceil_mode=ceil_mode)
-
-    def forward(self, x):
-        if self.with_maxpool:
-            return self.conv(self.pooler(x))
-        else:
-            return self.conv(x)
+class DefaultHEDBlock(BaseHEDBlock):
+    def __init__(self, in_channels, out_channels, dilation=1, stride=3):
+        super(DefaultHEDBlock, self).__init__(in_channels, out_channels, ConvELU2D, ConvELU2D, ConvELU2D)
 
 
-# NOTE we use 3 convolutions for all blocks
-# in the initial implementations, the first 2 blocks only
-# consist of 2 convolutions
-# TODO make the pooling factor settable !!
-class AnisotropicHEDBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, conv_type, dilation=1,
-                 with_maxpool=True, pooling_factor=3):
-        assert dilation == 1, "Dilation not supported for anisotropic HED"
-        super(AnisotropicHEDBlock, self).__init__()
-        self.conv = nn.Sequential(conv_type(in_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation),
-                                  conv_type(out_channels, out_channels, 3, dilation))
-        self.with_maxpool = with_maxpool
-        if self.with_maxpool:
-            self.pooler = AnisotropicPool(pooling_factor)
-
-    def forward(self, x):
-        if self.with_maxpool:
-            return self.conv(self.pooler(x))
-        else:
-            return self.conv(x)
+class DefaultHEDBlock3D(BaseHEDBlock):
+    def __init__(self, in_channels, out_channels, dilation=1, stride=3):
+        super(DefaultHEDBlock3D, self).__init__(in_channels, out_channels, ConvELU3D, ConvELU3D, ConvELU3D)
 
 
-# FIXME bilinear upsampling for 5D input dies not work
 class Upsampling3d(nn.Module):
     def __init__(self, scale_factor):
         super(Upsampling3d, self).__init__()
-        self.sample = nn.Upsample(scale_factor=scale_factor)  # , mode='bilinear')
+        self.sample = nn.Upsample(scale_factor=scale_factor, mode='trilinear',
+                                  align_corners=False)
 
     def forward(self, x):
         return self.sample(x)
 
 
-class HED(nn.Module):
-    conv_types = {'default': DefaultConv,
-                  'default3d': DefaultConv3D,
-                  'same': ConvELU2D,
-                  'same3d': ConvELU3D}
-    block_types = {'default': DefaultHEDBlock,
-                   'default3d': DefaultHEDBlock3D,
-                   'anisotropic': AnisotropicHEDBlock}
-    output_types = {'default': nn.Conv2d,
-                    'default3d': nn.Conv3d,
-                    'same': Conv2D,
-                    'same3d': Conv3D}
-    upsampling_types = {'default': nn.UpsamplingBilinear2d,
-                        'default3d': Upsampling3d,
-                        'anisotropic': AnisotropicUpsample}
+class Upsampling2d(nn.Module):
+    def __init__(self, scale_factor):
+        super(Upsampling2d, self).__init__()
+        self.sample = nn.Upsample(scale_factor=scale_factor, mode='bilinear',
+                                  align_corners=False)
 
-    def __init__(self, in_channels=3,
-                 out_channels=1, dilation=1,
-                 conv_type_key='default',
+    def forward(self, x):
+        return self.sample(x)
+
+
+# Wrapper to allow calling AnisotropicPool with stride
+class PoolAniso(AnisotropicPool):
+    def __init__(self, scale_factor, stride):
+        super(PoolAniso, self).__init__(scale_factor)
+
+
+class HED(nn.Module):
+    block_types = {'default': DefaultHEDBlock,
+                   'default3d': DefaultHEDBlock3D}
+    sampling_types = {'default': (nn.MaxPool2d, Upsampling2d),
+                      'default3d': (nn.MaxPool3d, Upsampling3d),
+                      'anisotropic': (PoolAniso, AnisotropicUpsample)}
+    output_types = {'default': Conv2D,
+                    'default3d': Conv3D}
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 initial_num_fmaps,
+                 fmap_growth,
+                 scale_factor=2,
                  block_type_key='default',
                  output_type_key='default',
-                 upsampling_type_key='default'):
-        # validate input keys
-        assert conv_type_key in self.conv_types, conv_type_key
-        conv_type = self.conv_types[conv_type_key]
+                 sampling_type_key='default',
+                 rescale_outputs=True):
+
+        # scale factors can be list or single value
+        assert isinstance(scale_factor, (int, list, tuple))
+        if isinstance(scale_factor, (list, tuple)):
+            assert len(scale_factor) == 4
+            self.scale_factor = scale_factor
+        else:
+            self.scale_factor = 4 * (scale_factor,)
 
         # block types can be single key or list of keys
         assert isinstance(block_type_key, (str, list, tuple))
@@ -156,72 +101,116 @@ class HED(nn.Module):
         assert output_type_key in self.output_types, output_type_key
         output_type = self.output_types[output_type_key]
 
-        # upsampling types can be single key or list of keys
-        if isinstance(upsampling_type_key, (list, tuple)):
-            assert len(upsampling_type_key) == 5
-            assert all(ukt in self.upsampling_types
-                       for ukt in upsampling_type_key), upsampling_type_key
-            self.upsampling_type_key = upsampling_type_key
+        # sampling types can be single key or list of keys
+        if isinstance(sampling_type_key, (list, tuple)):
+            assert len(sampling_type_key) == 4
+            assert all(skt in self.sampling_types
+                       for skt in sampling_type_key), sampling_type_key
+            self.sampling_type_key = sampling_type_key
         else:
-            assert upsampling_type_key in self.upsampling_types, upsampling_type_key
-            self.upsampling_type_key = 5 * (upsampling_type_key,)
+            assert sampling_type_key in self.sampling_types, sampling_type_key
+            self.sampling_type_key = 4 * (sampling_type_key,)
 
         super(HED, self).__init__()
-        self.conv1 = self.block_types[self.block_type_key[0]](in_channels, 32, conv_type, with_maxpool=False)
-        self.conv2 = self.block_types[self.block_type_key[1]](32, 64, conv_type)
-        self.conv3 = self.block_types[self.block_type_key[2]](64, 256, conv_type)
-        self.conv4 = self.block_types[self.block_type_key[3]](256, 512, conv_type)
-        self.conv5 = self.block_types[self.block_type_key[4]](512, 512, conv_type, dilation=dilation)
+        # calculate number of features for all levels
+        f0 = initial_num_fmaps
+        f1 = initial_num_fmaps * fmap_growth
+        f2 = initial_num_fmaps * fmap_growth**2
+        f3 = initial_num_fmaps * fmap_growth**3
 
-        self.dsn1 = output_type(32, out_channels, 1)
-        self.dsn2 = output_type(64, out_channels, 1)
-        self.dsn3 = output_type(256, out_channels, 1)
-        self.dsn4 = output_type(512, out_channels, 1)
-        self.dsn5 = output_type(512, out_channels, 1)
+        # convolutional blocks
+        self.conv0 = self.block_types[self.block_type_key[0]](in_channels, f0)
+        self.conv1 = self.block_types[self.block_type_key[1]](f0, f1)
+        self.conv2 = self.block_types[self.block_type_key[2]](f1, f2)
+        self.conv3 = self.block_types[self.block_type_key[3]](f2, f3)
+        # we don't change the number of feats in the last conv block
+        self.conv4 = self.block_types[self.block_type_key[4]](f3, f3)
+
+        # poolers
+        sample_type0 = self.sampling_types[self.sampling_type_key[0]]
+        self.pool0 = sample_type0[0](self.scale_factor[0], stride=self.scale_factor[0])
+
+        sample_type1 = self.sampling_types[self.sampling_type_key[1]]
+        self.pool1 = sample_type1[0](self.scale_factor[1], stride=self.scale_factor[1])
+
+        sample_type2 = self.sampling_types[self.sampling_type_key[2]]
+        self.pool2 = sample_type2[0](self.scale_factor[2], stride=self.scale_factor[2])
+
+        sample_type3 = self.sampling_types[self.sampling_type_key[3]]
+        self.pool3 = sample_type3[0](self.scale_factor[3], stride=self.scale_factor[3])
+
+        self.out0 = output_type(f0, out_channels, 1)
+        self.out1 = output_type(f1, out_channels, 1)
+        self.out2 = output_type(f2, out_channels, 1)
+        self.out3 = output_type(f3, out_channels, 1)
+        self.out4 = output_type(f3, out_channels, 1)
         # 6 is the fusion layer -> 5 * out_channels
-        self.dsn6 = output_type(5*out_channels, out_channels, 1)
+        self.out5 = output_type(5*out_channels, out_channels, 1)
 
-        # last_scale = 8 if dilation > 1 else 16
-        # FIXME don't hardcode cremi values
-        self.upscore2 = self.upsampling_types[self.upsampling_type_key[1]](scale_factor=3)
-        self.upscore3 = self.upsampling_types[self.upsampling_type_key[2]](scale_factor=9)
-        self.upscore4 = self.upsampling_types[self.upsampling_type_key[3]](scale_factor=2)
-        # self.upscore5 = self.upsampling_types[self.upsampling_type_key[3]](scale_factor=last_scale)
-        self.upscore5 = self.upsampling_types[self.upsampling_type_key[4]](scale_factor=4)
+        self.upsample0 = sample_type0[1](scale_factor=self.scale_factor[0])
+        self.upsample1 = sample_type1[1](scale_factor=self.scale_factor[1])
+        self.upsample2 = sample_type2[1](scale_factor=self.scale_factor[2])
+        self.upsample3 = sample_type3[1](scale_factor=self.scale_factor[3])
+        self.rescale_outputs = rescale_outputs
 
     def forward(self, x):
-        conv1 = self.conv1(x)
-        conv2 = self.conv2(conv1)
-        conv3 = self.conv3(conv2)
-        conv4 = self.conv4(conv3)
-        conv5 = self.conv5(conv4)
 
-        # FIXME don't hardcode cremi settings
-        # side output
-        d5 = self.upscore5(self.upscore3(self.dsn5(conv5)))
-        # d5 = crop(dsn5_up, gt)
+        # apply convolutions and poolings
+        conv0 = self.conv0(x)
 
-        d4 = self.upscore4(self.upscore3(self.dsn4(conv4)))
-        # d4 = crop(dsn4_up, gt)
+        conv1 = self.pool0(conv0)
+        conv1 = self.conv1(conv1)
 
-        d3 = self.upscore3(self.dsn3(conv3))
-        # d3 = crop(dsn3_up, gt)
+        conv2 = self.pool1(conv1)
+        conv2 = self.conv2(conv2)
 
-        d2 = self.upscore2(self.dsn2(conv2))
-        # d2 = crop(dsn2_up, gt)
+        conv3 = self.pool2(conv2)
+        conv3 = self.conv3(conv3)
 
-        d1 = self.dsn1(conv1)
-        # d1 = crop(dsn1, gt)
+        conv4 = self.pool3(conv3)
+        conv4 = self.conv4(conv4)
 
-        # dsn fusion output
-        d6 = self.dsn6(torch.cat((d1, d2, d3, d4, d5), 1))
+        if self.rescale_outputs:
 
-        d1 = F.sigmoid(d1)
-        d2 = F.sigmoid(d2)
-        d3 = F.sigmoid(d3)
-        d4 = F.sigmoid(d4)
-        d5 = F.sigmoid(d5)
-        d6 = F.sigmoid(d6)
+            # make side output
+            # NOTE we may have different pooling schemes, so we need to apply
+            # all the samplers in a chain
+            out0 = self.out0(conv0)
+            out1 = self.upsample0(self.out1(conv1))
+            out2 = self.upsample1(self.upsample0(self.out2(conv2)))
+            out3 = self.upsample2(self.upsample1(self.upsample0(self.out3(conv3))))
+            out4 = self.upsample3(self.upsample2(self.upsample1(self.upsample0(self.out4(conv4)))))
+
+            # make fusion output
+            out5 = self.out5(torch.cat((out0, out1, out2, out3, out4), 1))
+
+        else:
+
+            # make side output
+            # NOTE we may have different pooling schemes, so we need to apply
+            # all the samplers in a chain
+            out0 = self.out0(conv0)
+            out1 = self.out1(conv1)
+            out2 = self.out2(conv2)
+            out3 = self.out3(conv3)
+            out4 = self.out4(conv4)
+
+            upsampled1 = self.upsample0(out1)
+            upsampled2 = self.upsample1(self.upsample0(out2))
+            upsampled3 = self.upsample2(self.upsample1(self.upsample0(out3)))
+            upsampled4 = self.upsample3(self.upsample2(self.upsample1(self.upsample0(out4))))
+
+            # make fusion output
+            out5 = self.out5(torch.cat((out0, upsampled1, upsampled2, upsampled3, upsampled4), 1))
+
+        # apply activations
+        # TODO enable different activations
+        out0 = F.sigmoid(out0)
+        out1 = F.sigmoid(out1)
+        out2 = F.sigmoid(out2)
+        out3 = F.sigmoid(out3)
+        out4 = F.sigmoid(out4)
+        out5 = F.sigmoid(out5)
 
         # we return first, because it is usually the one used for stuff
-        return d6, d2, d3, d4, d5, d1
+        return out5, out0, out1, out2, out3, out4

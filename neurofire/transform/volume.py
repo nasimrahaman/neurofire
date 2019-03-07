@@ -112,3 +112,12 @@ class RandomSlide(Transform):
             out_volumes = tuple(np.array([self.shift_and_crop(image=plane, zero_shift=True)
                                          for plane in volume]) for volume in volumes)
         return out_volumes
+
+
+class RejectNonZeroThreshold(object):
+    def __init__(self, threshold):
+        self.threshold = threshold
+
+    # return True if ration of non-zeros is below the threshold and hence the batch should be rejected
+    def __call__(self, fetched):
+        return (np.count_nonzero(fetched) / fetched.size) < self.threshold

@@ -1,7 +1,6 @@
 import torch.nn as nn
-
 from .base import UNetSkeletonMultiscale
-from ..unet.unet_3d import Output, CONV_TYPES, Encoder, Decoder, Base, EncoderResidual, DecoderResidual, BaseResidual
+from ..unet.unet_3d import Output, CONV_TYPES, Encoder, Decoder, Base, EncoderResidual, DecoderResidual, BaseResidual, get_sampler
 
 
 class UNet3DMultiscale(UNetSkeletonMultiscale):
@@ -52,31 +51,32 @@ class UNet3DMultiscale(UNetSkeletonMultiscale):
         conv_type = CONV_TYPES[conv_type_key]
         decoder_type = DecoderResidual if add_residual_connections else Decoder
         encoder_type = EncoderResidual if add_residual_connections else Encoder
-        base_type = BaseResidual if add_residual_connections else Base
+        base_type = EncoderResidual if add_residual_connections else Encoder
 
         # Build encoders with proper number of feature maps
         f0e = initial_num_fmaps
         f1e = initial_num_fmaps * fmap_growth
         f2e = initial_num_fmaps * fmap_growth**2
         encoders = [
-            encoder_type(in_channels, f0e, 3, self.scale_factor[0], conv_type=conv_type),
-            encoder_type(f0e, f1e, 3, self.scale_factor[1], conv_type=conv_type),
-            encoder_type(f1e, f2e, 3, self.scale_factor[2], conv_type=conv_type)
+            encoder_type(in_channels, f0e, 3, 0, conv_type=conv_type),
+            encoder_type(f0e, f1e, 3, self.scale_factor[0], conv_type=conv_type),
+            encoder_type(f1e, f2e, 3, self.scale_factor[1], conv_type=conv_type)
         ]
 
         # Build base
         # number of base output feature maps
         f0b = initial_num_fmaps * fmap_growth**3
-        base = base_type(f2e, f0b, 3, conv_type=conv_type)
+        base = base_type(f2e, f0b, 3, scale_factor=self.scale_factor[2], conv_type=conv_type)
 
         # Build decoders (same number of feature maps as MALA)
         f2d = initial_num_fmaps * fmap_growth**2
         f1d = initial_num_fmaps * fmap_growth
         f0d = initial_num_fmaps
+        # NOTE we need seperate samplers for consistent multi-scale
         decoders = [
-            decoder_type(f0b + f2e + out_channels, f2d, 3, self.scale_factor[2], conv_type=conv_type),
-            decoder_type(f2d + f1e + out_channels, f1d, 3, self.scale_factor[1], conv_type=conv_type),
-            decoder_type(f1d + f0e + out_channels, f0d, 3, self.scale_factor[0], conv_type=conv_type)
+            decoder_type(f0b + f2e + out_channels, f2d, 3, 0, conv_type=conv_type),
+            decoder_type(f2d + f1e + out_channels, f1d, 3, 0, conv_type=conv_type),
+            decoder_type(f1d + f0e + out_channels, f0d, 3, 0, conv_type=conv_type)
         ]
 
         # Build decoders
@@ -89,11 +89,13 @@ class UNet3DMultiscale(UNetSkeletonMultiscale):
         # Parse final activation
         if final_activation == 'auto':
             final_activation = nn.Sigmoid() if out_channels == 1 else nn.Softmax2d()
+        samplers = [get_sampler(scale_factor=sf) for sf in reversed(self.scale_factor)]
 
         # Build the architecture
         super(UNet3DMultiscale, self).__init__(encoders=encoders,
                                                base=base,
                                                decoders=decoders,
                                                predictors=predictors,
+                                               samplers=samplers,
                                                final_activation=final_activation,
                                                return_inner_feature_layers=return_inner_feature_layers)

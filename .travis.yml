@@ -1,25 +1,18 @@
 language: python
+dist: xenial
 python:
-  # We don't actually use the Travis Python, but this keeps it organized.
-  # - "3.5"
-  - "3.6"
+  - 3.7
 install:
   - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
   - bash miniconda.sh -b -p $HOME/miniconda
   - export PATH="$HOME/miniconda/bin:$PATH"
-  - hash -r
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
-  # Useful for debugging any issues with conda
-  - conda info -a
-
   - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION
   - source activate test-environment
-  - conda install -c pytorch pytorch torchvision 
-  - conda install -c conda-forge networkx=1.11 pyyaml scipy scikit-image h5py dill vigra
-  - conda install -c inferno-pytorch inferno
+  - conda install -c pytorch -c conda-forge inferno
+
 
 script:
-  # run all tests in the `tests/neurofire` subdirectories
   - source activate test-environment
-  - python -m unittest discover tests/neurofire
+  - python -m unittest discover -s tests/neurofire -v

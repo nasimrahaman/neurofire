@@ -2,9 +2,9 @@ from inferno.io.volumetric import HDF5VolumeLoader
 from inferno.io.transform import Compose
 from inferno.io.transform.generic import Cast
 from inferno.utils import python_utils as pyu
-from ....transform.segmentation import Segmentation2Membranes, Segmentation2Affinities
+from ....transform.segmentation import Segmentation2Membranes
 from ....transform.segmentation import NegativeExponentialDistanceTransform
-from ....transform.segmentation import ConnectedComponents3D
+from ....transform.segmentation import ConnectedComponents3D, ConnectedComponents2D
 
 
 class MembraneVolume(HDF5VolumeLoader):
@@ -68,20 +68,25 @@ class AffinityVolume(MembraneVolume):
 
 class SegmentationVolume(HDF5VolumeLoader):
     def __init__(self, path, path_in_h5_dataset=None,
-                data_slice=None, name=None, dtype='float32',
-                **slicing_config):
+                 data_slice=None, name=None, dtype='float32', apply_on_image=False,
+                 **slicing_config):
         path_in_h5_dataset = path_in_h5_dataset if path_in_h5_dataset is not None else \
             '/volumes/labels/neuron_ids'
         # Init super
         super(SegmentationVolume, self).__init__(path=path, path_in_h5_dataset=path_in_h5_dataset,
-                                             data_slice=data_slice, name=name, **slicing_config)
+                                                 data_slice=data_slice, name=name, **slicing_config)
 
         assert isinstance(dtype, str)
         self.dtype = dtype
+        self.apply_on_image = apply_on_image
         # Make transforms
         self.transforms = self.get_transforms()
 
     def get_transforms(self):
-        transforms = Compose(
+        if (self.apply_on_image):
+            transforms = Compose(ConnectedComponents2D(label_segmentation=True),
+                             Cast(self.dtype))
+        else:
+            transforms = Compose(ConnectedComponents3D(label_segmentation=True),
                              Cast(self.dtype))
         return transforms

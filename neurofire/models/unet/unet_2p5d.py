@@ -52,24 +52,24 @@ class UNet2p5D(UNetSkeleton):
         f1e = initial_num_fmaps * fmap_growth
         f2e = initial_num_fmaps * fmap_growth**2
         encoders = [
-            Encoder(in_channels, f0e, 3, conv_type=conv_type, scale_factor=self.scale_factor[0]),
-            Encoder(f0e, f1e, 3, conv_type=conv_type, scale_factor=self.scale_factor[1]),
-            Encoder(f1e, f2e, 3, conv_type=conv_type, scale_factor=self.scale_factor[2])
+            Encoder(in_channels, f0e, 3, conv_type=conv_type, scale_factor=0),
+            Encoder(f0e, f1e, 3, conv_type=conv_type, scale_factor=self.scale_factor[0]),
+            Encoder(f1e, f2e, 3, conv_type=conv_type, scale_factor=self.scale_factor[1])
         ]
 
         # Build base
         # number of base output feature maps
         f0b = initial_num_fmaps * fmap_growth**3
-        base = Base(f2e, f0b, 3)
+        base = Base(f2e, f0b, 3, scale_factor=self.scale_factor[2])
 
         # Build decoders
         f2d = initial_num_fmaps * fmap_growth**2
         f1d = initial_num_fmaps * fmap_growth
         f0d = initial_num_fmaps
         decoders = [
-            Decoder(f0b + f2e, f2d, 3, conv_type=conv_type, scale_factor=self.scale_factor[2]),
-            Decoder(f2d + f1e, f1d, 3, conv_type=conv_type, scale_factor=self.scale_factor[1]),
-            Decoder(f1d + f0e, f0d, 3, conv_type=conv_type, scale_factor=self.scale_factor[0])
+            Decoder(f0b + f2e, f2d, 3, conv_type=conv_type, scale_factor=self.scale_factor[1]),
+            Decoder(f2d + f1e, f1d, 3, conv_type=conv_type, scale_factor=self.scale_factor[2]),
+            Decoder(f1d + f0e, f0d, 3, conv_type=conv_type, scale_factor=0)
         ]
 
         # Build output

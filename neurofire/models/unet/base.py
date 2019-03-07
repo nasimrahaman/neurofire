@@ -3,7 +3,8 @@ import torch.nn as nn
 
 
 class Xcoder(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, conv_type, pre_output):
+    def __init__(self, in_channels, out_channels, kernel_size, conv_type,
+                 pre_conv=None, post_conv=None):
         super(Xcoder, self).__init__()
         assert out_channels % 2 == 0
         # make sure that conv-type
@@ -19,17 +20,16 @@ class Xcoder(nn.Module):
         self.conv2 = conv_type(in_channels=self.out_channels,
                                out_channels=self.out_channels,
                                kernel_size=kernel_size)
-        self.pre_output = pre_output
+        self.pre_conv = pre_conv
+        self.post_conv = post_conv
 
     #
     # noinspection PyCallingNonCallable
     def forward(self, input_):
-        conv1_out = self.conv1(input_)
-        conv2_out = self.conv2(conv1_out)
-        if self.pre_output is not None:
-            out = self.pre_output(conv2_out)
-        else:
-            out = conv2_out
+        input_ = input_ if self.pre_conv is None else self.pre_conv(input_)
+        out = self.conv1(input_)
+        out = self.conv2(out)
+        out = out if self.post_conv is None else self.post_conv(out)
         return out
 
 
@@ -77,9 +77,50 @@ class XcoderResidual(Xcoder):
         # Add skip connection:
         out = conv1_out + conv3_out
 
-        if self.pre_output is not None:
-            out = self.pre_output(out)
+        if self.post_conv is not None:
+            out = self.post_conv(out)
 
+        return out
+
+class XcoderDilated (nn.Module):
+	#applies dilated convolutions in parallel, cats the results, and applies one more conv
+    def __init__(self, in_channels, out_channels, kernel_size, dil_conv_type, 
+                 conv_type, dilation_list, pre_conv=None, post_conv=None, **kwargs):
+        super(XcoderDilated, self).__init__()
+        assert out_channels % 2 == 0
+        assert isinstance(conv_type, type)
+        assert isinstance(dilation_list, (list, tuple)) #the list of dilations applied in parralel
+        # the in-channels we get from the top-level / bottom level layer + skip connections
+        self.in_channels = in_channels
+        self.out_channels = out_channels 
+        self.kernel_size = kernel_size
+        self.dil_conv_type = dil_conv_type
+        self.conv_type = conv_type
+        self.dilation_list = dilation_list        
+        self.pre_conv = pre_conv
+        self.post_conv = post_conv
+        self.convs=nn.ModuleList()
+        for dilation in dilation_list:
+            self.convs.append(dil_conv_type(in_channels=self.in_channels,
+                               out_channels=self.out_channels,
+                               kernel_size=self.kernel_size, 
+                               dilation=dilation, **kwargs))
+        self.conv2 = conv_type(in_channels=self.out_channels*len(dilation_list),
+                               out_channels=self.out_channels,
+                               kernel_size=self.kernel_size)
+        self.pre_conv = pre_conv
+        self.post_conv = post_conv
+
+    #
+    # noinspection PyCallingNonCallable
+    def forward(self, input_):
+        input_ = input_ if self.pre_conv is None else self.pre_conv(input_)
+        outputs = []
+        for conv1 in self.convs:
+            outputs.append(conv1(input_))
+        out = torch.cat(outputs, 1)
+        out = self.conv2(out)
+        out = out if self.post_conv is None else self.post_conv(out)
         return out
 
 
@@ -89,9 +130,7 @@ class UNetSkeleton(nn.Module):
         assert isinstance(encoders, list)
         assert isinstance(decoders, list)
 
-        # why do we hard-code this to 3 ? wouldn't it be enough to check that they are
-        # all of the same length
-        assert len(encoders) == len(decoders) == 3
+        assert len(encoders) == len(decoders), "%i, %i" % (len(encoders), len(decoders))
         assert isinstance(base, nn.Module)
         self.encoders = nn.ModuleList(encoders)
         self.decoders = nn.ModuleList(decoders)
@@ -109,48 +148,23 @@ class UNetSkeleton(nn.Module):
 
     def forward(self, input_):
 
-        # all spatial sizes (ssize) for 512 input size
-        # and donwscaling by a factor of 2
-        # apply first decoder
-        # e0.ssize = 256 (ssize / scale_factor)
-        e0 = self.encoders[0](input_)
+        x = input_
+        encoder_out = []
+        # apply encoders and remember their outputs
+        for encoder in self.encoders:
+            x = encoder(x)
+            encoder_out.append(x)
 
-        # apply second encoder
-        # e1.ssize = 128 (ssize / (scale_factor**2))
-        e1 = self.encoders[1](e0)
+        x = self.base(x)
 
-        # apply third encoder
-        # e2.ssize = 64 (ssize / (scale_factor**3))
-        e2 = self.encoders[2](e1)
+        # apply decoders
+        max_level = len(self.decoders) - 1
+        for level, decoder in enumerate(self.decoders):
+            # the decoder gets input from the previous decoder and the encoder
+            # from the same level
+            x = decoder(torch.cat((x, encoder_out[max_level - level]), 1))
 
-        # apply the base
-        # b.ssize = 64
-        b = self.base(e2)
-
-        # apply the third / lowest decoder with input from base
-        # and encoder 2
-        # d2.ssize = 128
-        d2 = self.decoders[0](
-            torch.cat((b, e2), 1)
-        )
-
-        # apply the second decoder with input from the third decoder
-        # and the second encoder
-        # d1.ssize = 256
-        d1 = self.decoders[1](
-            torch.cat((d2, e1), 1)
-        )
-
-        # apply the first decoder with input from the second decoder
-        # and the first encoder
-        # d0.ssize = 512
-        d0 = self.decoders[2](
-            torch.cat((d1, e0), 1)
-        )
-
-        # out.ssize = 512
-        out = self.output(d0)
-
+        x = self.output(x)
         if self.final_activation is not None:
-            out = self.final_activation(out)
-        return out
+            x = self.final_activation(x)
+        return x

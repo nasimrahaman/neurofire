@@ -23,6 +23,18 @@ class BaseTest(unittest.TestCase):
         return seg
 
     @staticmethod
+    def make_segmentation(shape):
+        seg = np.zeros(shape, dtype='int32')
+        label = 1
+        # make randoms segmentation
+        for index in range(seg.size):
+            coord = np.unravel_index(index, shape)
+            seg[coord] = label
+            if np.random.rand() > 0.9:
+                label += 1
+        return seg
+
+    @staticmethod
     def brute_force_transition_masking(segmentation, offsets, ignore_value=0):
         # squeeze away the batch dimension
         segmentation = segmentation.squeeze()

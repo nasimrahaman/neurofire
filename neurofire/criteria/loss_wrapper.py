@@ -1,10 +1,11 @@
 from numbers import Integral
 import numpy as np
 
-import torch
 import torch.nn as nn
 
+from inferno.utils.python_utils import is_listlike
 from .loss_transforms import MaskTransitionToIgnoreLabel
+import torch
 
 
 class BalanceAffinities(object):
@@ -60,9 +61,9 @@ class LossWrapper(nn.Module):
                  criterion,
                  transforms=None,
                  weight_function=None):
-        super(LossWrapper, self).__init__()
+        super().__init__()
         # validate: the criterion needs to inherit from nn.Module
-        assert isinstance(criterion, nn.Module)
+        # assert isinstance(criterion, nn.Module)
         self.criterion = criterion
         # validate: transforms need to be callable
         if transforms is not None:
@@ -72,18 +73,36 @@ class LossWrapper(nn.Module):
             assert callable(weight_function)
         self.weight_function = weight_function
 
+    def apply_transforms(self, prediction, target):
+        # check if the tensors (prediction and target are lists)
+        # if so , we need to loop and apply the transforms to each element inidvidually
+        is_listlike = isinstance(prediction, (list, tuple))
+        if is_listlike:
+            assert isinstance(target, (list, tuple))
+        # list-like input
+        if is_listlike:
+            transformed_prediction, transformed_target = [], []
+            for pred, targ in zip(prediction, target):
+                tr_pred, tr_targ = self.transforms(pred, targ)
+                transformed_prediction.append(tr_pred)
+                transformed_target.append(tr_targ)
+        # tensor input
+        else:
+            transformed_prediction, transformed_target = self.transforms(prediction, target)
+        return transformed_prediction, transformed_target
+
     def forward(self, prediction, target):
         # calculate the weight based on prediction and target
         if self.weight_function is not None:
             weight = self.weight_function(prediction, target)
             self.criterion.weight = weight
 
-        if self.transforms is not None:
-            transformed_prediction, transformed_target = self.transforms(prediction, target)
-        else:
+        # apply the transforms to prediction and target or a list of predictions and targets
+        if self.transforms is None:
             transformed_prediction, transformed_target = prediction, target
+        else:
+            transformed_prediction, transformed_target = self.apply_transforms(prediction, target)
 
-        # print("!!!", transformed_prediction.size(), transformed_target.size())
         loss = self.criterion(transformed_prediction, transformed_target)
         return loss
 
@@ -92,7 +111,7 @@ class MultiOutputLossWrapper(nn.Module):
     """
     Wrapper around a torch criterion.
     Enables transforms before applying the criterion.
-    expects a list of tensors as input and returns the sum of loss over all elements
+    Expects a list of tensors as input and returns the sum of loss over all elements.
     """
     def __init__(self,
                  criterion,
@@ -123,6 +142,3 @@ class MultiOutputLossWrapper(nn.Module):
 
         loss = loss + self.slice_loss(predictions[-1], target)
         return loss
-
-# TODO something analogous to `AsSegmentationCriterion` from neuro-skunkworks to
-# move loss preprocessing to the gpu ?!
