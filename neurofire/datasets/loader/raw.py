@@ -43,12 +43,12 @@ class RawVolume(io.HDF5VolumeLoader):
 
     def get_transforms(self, mean, std, sigma):
         if sigma is None:
-            transforms = Compose(Cast(self.dtype),
-                                 Normalize(mean=mean, std=std))
+            transforms = Compose(Cast(self.dtype, apply_to=[0]),
+                                 Normalize(mean=mean, std=std, apply_to=[0]))
         else:
-            transforms = Compose(Cast(self.dtype),
-                                 Normalize(mean=mean, std=std),
-                                 AdditiveNoise(sigma=sigma))
+            transforms = Compose(Cast(self.dtype, apply_to=[0]),
+                                 Normalize(mean=mean, std=std, apply_to=[0]),
+                                 AdditiveNoise(sigma=sigma, apply_to=[0]))
         return transforms
 
 
@@ -73,12 +73,15 @@ class RawVolumeWithDefectAugmentation(RawVolume):
         index = int(index)
         slices = self.base_sequence[index]
         sliced_volume = self.volume[tuple(slices)]
-        transformed = sliced_volume if self.transforms is None  else\
-            self.transforms(sliced_volume)
+        transformed = sliced_volume.astype('float32')
 
         # apply defect augmentation with z-offset
         z_offset = slices[0].start
         transformed = self.defect_augmentation(transformed, z_offset=z_offset)
+
+        transformed = [transformed] if not isinstance(transformed, (list, tuple)) else transformed
+        transformed = transformed if self.transforms is None  else\
+            self.transforms(*transformed)
 
         if self.return_index_spec:
             return transformed, IndexSpec(index=index, base_sequence_at_index=slices)
