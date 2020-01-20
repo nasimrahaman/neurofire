@@ -310,13 +310,17 @@ class MaskTransitionToIgnoreLabel(Transform):
 
 
 class InvertTarget(Transform):
-    def __init__(self, **super_kwargs):
+    def __init__(self, target_has_segm=False, **super_kwargs):
         super(InvertTarget, self).__init__(**super_kwargs)
+        self.target_has_segm = target_has_segm
 
     def batch_function(self, tensors):
-        assert len(tensors) == 2
-        prediction, target = tensors
-        return prediction, 1. - target
+        target = tensors[-1]
+        if self.target_has_segm:
+            target[1:] = 1. - target[1:]
+        else:
+            target = 1. - target
+        return tensors[:-1] + (target, )
 
 
 class InvertPrediction(Transform):
