@@ -33,15 +33,23 @@ class DefectAugmentation(Transform):
         artifact_source: data source for additional artifacts
         mean_val: mean value for artifact normalization
         std_val: std value for artifact normalization
+
+        keep_track_of: list with possible values
+        'low_contrast', 'artifacts', 'missing_slice', 'deformed_slice'
+
     """
     def __init__(self, p_missing_slice, p_low_contrast,
                  p_deformed_slice, p_artifact_source=0,
                  ignore_slice_list=None, contrast_scale=0.1,
                  deformation_mode='undirected', deformation_strength=10,
                  artifact_source=None, mean_val=None, std_val=None,
+                 max_contiguous_defected_slices=-1,
+                 keep_track_of=None,
                  **super_kwargs):
         super().__init__(**super_kwargs)
 
+        self.max_contiguous_defected_slices = max_contiguous_defected_slices
+        
         # set the cumulative defect probabilities
         self.p_missing_slice = p_missing_slice
         self.p_low_contrast = self.p_missing_slice + p_low_contrast
@@ -50,6 +58,9 @@ class DefectAugmentation(Transform):
         assert self.p_artifact_source <= 1.
 
         self.ignore_slice_list = ignore_slice_list
+        keep_track_of = [] if keep_track_of is None else keep_track_of
+        assert isinstance(keep_track_of, list)
+        self.keep_track_of = keep_track_of
 
         # set the parameters for deformation augments
         if isinstance(deformation_mode, str):
@@ -154,8 +165,8 @@ class DefectAugmentation(Transform):
         flow_y[components == neg_val] = - self.deformation_strength * normal_vector[0]
 
         # add small random noise
-        flow_x += np.random.uniform(-1, 1, shape) * (self.deformation_strength / 8.)
-        flow_y += np.random.uniform(-1, 1, shape) * (self.deformation_strength / 8.)
+        # flow_x += np.random.uniform(-1, 1, shape) * (self.deformation_strength / 8.)
+        # flow_y += np.random.uniform(-1, 1, shape) * (self.deformation_strength / 8.)
 
         # apply the flow fields
         flow_x, flow_y = (x + flow_x).reshape(-1, 1), (y + flow_y).reshape(-1, 1)
@@ -203,7 +214,7 @@ class DefectAugmentation(Transform):
         section = section * (1. - alpha_mask) + artifact * alpha_mask
         return section
 
-    def volume_function(self, tensor, z_offset=None):
+    def defected_volume_function(self, tensor, z_offset=None):
 
         # we check for ignore slices if a z-offset is given and if we have
         # a ignore slice list
@@ -212,27 +223,81 @@ class DefectAugmentation(Transform):
             have_ignore_slices = True
 
         # we iterate over the slices and apply each defect trafo with the given probability
+        # defected_mask = np.zeros((tensor.shape[0]), dtype='bool')
+        defected_mask = np.zeros_like(tensor, dtype='bool')
+        nb_consecutive_defects = 0
+        next_to_be_skipped = 0
         for z in range(tensor.shape[0]):
+            if next_to_be_skipped > 0:
+                next_to_be_skipped -= 1
+                nb_consecutive_defects = 0
+                continue
 
-            # check if this slice should be ignored
+            # check if this slice should be ignored because already defected:
             if have_ignore_slices:
                 if z + z_offset in self.ignore_slice_list:
+                    # tensor[z] *= 2
+                    next_to_be_skipped = 2
                     continue
+                if z + 1 + z_offset in self.ignore_slice_list:
+                    # tensor[z] *= 2
+                    next_to_be_skipped = 3
+                    continue
+
+
+            # We never apply defects to the first/last slice:
+            if z == 0 or z == tensor.shape[0]-1:
+                continue
+
+            # Check if we reached the max nb of consecutive defected slices:
+            if nb_consecutive_defects >= self.max_contiguous_defected_slices and self.max_contiguous_defected_slices > 0:
+                nb_consecutive_defects = 0
+                continue
+            nb_consecutive_defects += 1
+
             r = np.random.random()
 
             if r < self.p_missing_slice:
+                # In this case we never black out two slices in a row:
                 tensor[z] = self.apply_missing_slice(tensor[z])
-
+                next_to_be_skipped = 3
+                if "missing_slice" in self.keep_track_of:
+                    defected_mask[z] = True
             elif r < self.p_low_contrast:
                 tensor[z] = self.apply_low_contrast(tensor[z])
-
+                if "low_contrast" in self.keep_track_of:
+                    defected_mask[z] = True
             elif r < self.p_deformed_slice:
                 tensor[z] = self.apply_deformed_slice(tensor[z])
-
+                if "deformed_slice" in self.keep_track_of:
+                    defected_mask[z] = True
             elif r < self.p_artifact_source:
+                # In this case we always apply TWO artifacts in a row...
                 tensor[z] = self.apply_artifact_source(tensor[z])
+                next_to_be_skipped = 2
+                if "artifacts" in self.keep_track_of:
+                    defected_mask[z] = True
+                # ... but only if the second is not the last slice in the batch:
+                if z != tensor.shape[0]-2:
+                    tensor[z+1] = self.apply_artifact_source(tensor[z+1])
+                    next_to_be_skipped = 3
+                    if "artifacts" in self.keep_track_of:
+                        defected_mask[z+1] = True
+            else:
+                nb_consecutive_defects = 0
 
-        return tensor
+        return tensor, defected_mask
+
+
+    def batch_function(self, batch, z_offset=None):
+        assert len(batch) == 1
+        defected_raw, defected_mask = self.defected_volume_function(batch[0], z_offset)
+
+        if self.keep_track_of:
+            return (defected_raw, defected_mask)
+        else:
+            return (defected_raw, )
+
 
     @classmethod
     def from_config(cls, config):
@@ -246,6 +311,8 @@ class DefectAugmentation(Transform):
         deformation_mode = config.get('deformation_mode', 'undirected')
         deformation_strength = config.get('deformation_strength', 10)
         artifact_source_config = config.get('artifact_source', None)
+        max_contiguous_defected_slices = config.get('max_contiguous_defected_slices', -1)
+        keep_track_of = config.get('keep_track_of')
         if artifact_source_config is not None:
             artifact_source = ArtifactSource.from_config(artifact_source_config)
         else:
@@ -256,4 +323,6 @@ class DefectAugmentation(Transform):
                    contrast_scale=contrast_scale,
                    deformation_mode=deformation_mode,
                    deformation_strength=deformation_strength,
-                   artifact_source=artifact_source)
+                   max_contiguous_defected_slices=max_contiguous_defected_slices,
+                   artifact_source=artifact_source,
+                   keep_track_of=keep_track_of)

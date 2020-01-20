@@ -33,8 +33,7 @@ class ArtifactVolume(HDF5VolumeLoader):
         self.transforms = self.get_transforms()
 
     def get_transforms(self):
-        transforms = Compose(Normalize(),
-                             Cast(self.dtype))
+        transforms = Compose(Cast(self.dtype))
         return transforms
 
 
