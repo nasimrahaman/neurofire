@@ -20,8 +20,8 @@ def get_pooler(scale_factor):
     else:
         if scale_factor > 0:
             pooler = nn.MaxPool3d(kernel_size=1 + scale_factor,
-                                   stride=scale_factor,
-                                   padding=1)
+                                  stride=scale_factor,
+                                  padding=1)
         else:
             pooler = None
     return pooler
@@ -195,8 +195,11 @@ class UNet3D(UNetSkeleton):
             decoder_type(f1d + f0e, f0d, 3, self.scale_factor[0], conv_type=conv_type)
         ]
 
+        # FIXME this is broken ?
         # Build output
-        output = Output(f0d, out_channels, 3)
+        # output = Output(f0d, out_channels, 3)
+        output = nn.Conv3d(f0d, out_channels, kernel_size=3, padding=1)
+
         # Parse final activation
         if final_activation == 'auto':
             final_activation = nn.Sigmoid() if out_channels == 1 else nn.Softmax2d()

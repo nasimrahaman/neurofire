@@ -428,6 +428,7 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
             convolved_tensor = np.stack([self.convolve_with_shift_kernel(tensor[:, z_num, ...])
                                          for z_num in range(tensor.shape[1])], axis=1)
         else:
+            print(tensor.ndim, self.dim)
             raise NotImplementedError
         # Threshold convolved tensor
         binarized_affinities = np.where(convolved_tensor == 0., 1., 0.)

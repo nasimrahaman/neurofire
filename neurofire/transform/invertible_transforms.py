@@ -4,7 +4,6 @@ from copy import deepcopy
 import numpy as np
 
 
-# TODO inherit from transform to inherit random variable convenience functions
 class InvertibleTransform(object):
 
     # similar to logic in `Transform`, but so far we only have `image_function` and `volume_function`
@@ -73,7 +72,7 @@ class InvertibleTransform(object):
             else:
                 # For a 3d tensor we apply the 2d transformation only along yx (last to axes)
                 return (offsets[0],) + self.apply_offset_2d(offsets[1:])
-        elif hasattr(self, 'new_channel_offsets_3d'):
+        elif hasattr(self, 'apply_offset_3d'):
             assert len(offsets) == 3
             return self.apply_offset_3d(offsets)
         else:
@@ -277,21 +276,3 @@ class InvertibleTranspose3D(InvertibleTransform):
 
     def invert_offset_3d(self, offsets):
         return self.apply_offset_3d(offsets)
-
-
-# TODO this does not make sense for the anisotropic data we
-# have, but once we go for isotropic 3d data, it might
-# (as well as 3d rotations)
-# class InvertibleTranspose3D(InvertibleTransform):
-#     def __init__(self):
-#         pass
-#
-#     def volume_function(self, volume):
-#         return volume.transpose()
-#
-#     def inverse_volume_function(self, volume):
-#         return self.volume_function(volume)
-#
-#     def new_channel_offsets_3d(self, offsets):
-#         assert len(offsets) == 3
-#         return offsets[::-1]

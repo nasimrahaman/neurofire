@@ -151,3 +151,15 @@ class RejectNonZeroThreshold(object):
     # return True if ration of non-zeros is below the threshold and hence the batch should be rejected
     def __call__(self, fetched):
         return (np.count_nonzero(fetched) / fetched.size) < self.threshold
+
+
+class Normalize01(Transform):
+    def __init__(self, eps=1.e-4, **super_kwargs):
+        super(Normalize01, self).__init__(**super_kwargs)
+        self.eps = eps
+
+    def tensor_function(self, tensor):
+        min_ = tensor.min()
+        max_ = tensor.max()
+        tensor = (tensor - min_) / (max_ + self.eps)
+        return tensor

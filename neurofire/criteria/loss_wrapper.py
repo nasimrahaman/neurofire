@@ -8,7 +8,7 @@ from .loss_transforms import MaskTransitionToIgnoreLabel
 import torch
 
 
-class BalanceAffinities(object):
+class BalanceAffinities:
     """
     Compute a weight for different classes, based on the distribution
     """
@@ -98,12 +98,10 @@ class LossWrapper(nn.Module):
             self.criterion.weight = weight
 
         # apply the transforms to prediction and target or a list of predictions and targets
-        if self.transforms is None:
-            transformed_prediction, transformed_target = prediction, target
-        else:
-            transformed_prediction, transformed_target = self.apply_transforms(prediction, target)
+        if self.transforms is not None:
+            prediction, target = self.apply_transforms(prediction, target)
 
-        loss = self.criterion(transformed_prediction, transformed_target)
+        loss = self.criterion(prediction, target)
         return loss
 
 

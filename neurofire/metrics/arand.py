@@ -134,6 +134,7 @@ class ArandErrorFromMWS(ArandFromSegmentationBase):
         self.randomize_strides = randomize_strides
 
     def _run_mws(self, input_):
+        assert len(input_) == len(self.offsets)
         input_[:self.dim] *= -1
         input_[:self.dim] += 1
         return compute_mws_segmentation(input_, self.offsets,
@@ -237,6 +238,8 @@ class ArandErrorFromMulticut(ArandFromSegmentationBase):
         ws, n_labels = self._compute_ws(input_)
         rag = nrag.gridRag(ws, numberOfLabels=n_labels,
                            numberOfThreads=self.n_threads)
+        if rag.numberOfEdges == 0:
+            return np.zeros_like(ws)
 
         # features and features to costs
         feats = feat_function(rag, input_)

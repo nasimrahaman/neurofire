@@ -84,7 +84,7 @@ class XcoderResidual(Xcoder):
 
 class XcoderDilated (nn.Module):
 	#applies dilated convolutions in parallel, cats the results, and applies one more conv
-    def __init__(self, in_channels, out_channels, kernel_size, dil_conv_type, 
+    def __init__(self, in_channels, out_channels, kernel_size, dil_conv_type,
                  conv_type, dilation_list, pre_conv=None, post_conv=None, **kwargs):
         super(XcoderDilated, self).__init__()
         assert out_channels % 2 == 0
@@ -92,18 +92,18 @@ class XcoderDilated (nn.Module):
         assert isinstance(dilation_list, (list, tuple)) #the list of dilations applied in parralel
         # the in-channels we get from the top-level / bottom level layer + skip connections
         self.in_channels = in_channels
-        self.out_channels = out_channels 
+        self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.dil_conv_type = dil_conv_type
         self.conv_type = conv_type
-        self.dilation_list = dilation_list        
+        self.dilation_list = dilation_list
         self.pre_conv = pre_conv
         self.post_conv = post_conv
         self.convs=nn.ModuleList()
         for dilation in dilation_list:
             self.convs.append(dil_conv_type(in_channels=self.in_channels,
                                out_channels=self.out_channels,
-                               kernel_size=self.kernel_size, 
+                               kernel_size=self.kernel_size,
                                dilation=dilation, **kwargs))
         self.conv2 = conv_type(in_channels=self.out_channels*len(dilation_list),
                                out_channels=self.out_channels,

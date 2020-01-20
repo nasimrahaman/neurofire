@@ -1,7 +1,7 @@
 import numpy as np
-from ..transforms.invertible_transforms import InvertibleTransform, ComposeInvertibles
-from ..transforms.invertible_transforms import InvertibleFlip2D, InvertibleFlip3D, InvertibleRotation
-from ..transforms.invertible_transforms import InvertibleTranspose2D, InvertibleTranspose3D
+from ..transform.invertible_transforms import InvertibleTransform, ComposeInvertibles
+from ..transform.invertible_transforms import InvertibleFlip2D, InvertibleFlip3D, InvertibleRotation
+from ..transform.invertible_transforms import InvertibleTranspose2D, InvertibleTranspose3D
 
 
 # this returns a 2d array with the all the indices of matching rows for a and b
@@ -62,25 +62,30 @@ class TestTimeAugmenter(object):
         return self.combinator(output, axis=0)
 
     # produce full ring of affinities
-    def make_full_affinties(self, affinities, offsets):
+    def make_full_affinities(self, affinities, offsets):
         assert affinities.ndim in (3, 4)
         shape = affinities.shape[1:]
         dim = len(shape)
         padding_size = int(np.abs(offsets).max())
-        n_offsets = len(offsets)
 
         full_affinities = []
         full_offsets = []
 
         # iterate over the offsets / affinities
-        for i_offset in range(n_offsets):
+        for i_offset, offset in enumerate(offsets):
+
+            # normalize the offset
+            offset = tuple(int(off) for off in offset)
+            affinity_channel = affinities[i_offset].squeeze()
+
+            # if this is a zero offset, just add it to the full affinities and continue
+            if all(off == 0 for off in offset):
+                full_affinities.append(affinity_channel[None])
+                full_offsets.append(offset)
+                continue
 
             # pad the current affinity channel
-            affinity_channel = affinities[i_offset].squeeze()
             padded_affinity_channel = np.pad(affinity_channel, padding_size, mode='reflect')
-
-            # the offsets of this channel
-            offset = tuple(int(off) for off in offsets[i_offset])
 
             # the point-mirrored  offset
             p_offset = tuple(-1 * val for val in offset)
@@ -104,29 +109,30 @@ class TestTimeAugmenter(object):
     # invert transformation on affinity maps
     def invert_affinity_transform(self, affinities, offsets, trafo):
         # dict to find offsets
-        offset_dict = {offset: i_offset for i_offset, offset in enumerate(offsets)}
+        offset_dict = {tuple(offset): i_offset for i_offset, offset in enumerate(offsets)}
         # the result
         inverted_affinites = [None] * len(offsets)
 
         # make full affinities to ensure that we can later map all inverted affinity
         # channels back to an original channel
-        full_affinities, full_offsets = self.make_full_affinties(affinities, offsets)
+        full_affinities, full_offsets = self.make_full_affinities(affinities, offsets)
 
         # iterate over the full affinities
-        for i_offset in range(len(full_offsets)):
+        for off, affinity_channel in zip(full_offsets, full_affinities):
 
             # caclulate the inverted offset
-            inverted_offset = trafo.invert_offset(full_offsets[i_offset])
+            inverted_offset = tuple(trafo.invert_offset(off))
             # if the inverted offset is in our original offsets,
             # invert the affinity channel and write it to the correct channel
             if inverted_offset in offset_dict:
                 # invert affinity channel
-                affinity_channel = full_affinities[i_offset]
                 inverted_affinity_channel = trafo.invert(affinity_channel)
                 # find the correct channel index
                 offset_index = offset_dict[inverted_offset]
                 inverted_affinites[offset_index] = inverted_affinity_channel[None]
 
+        assert all(iva is not None for iva in inverted_affinites), \
+            'One or more offset could not be inverted'
         inverted_affinites = np.concatenate(inverted_affinites, axis=0)
         assert inverted_affinites.shape == affinities.shape, "%s, %s" \
             % (str(inverted_affinites.shape), str(affinities.shape))
@@ -157,7 +163,7 @@ class TestTimeAugmenter(object):
 
     def __call__(self, input_, inference, offsets=None):
         if offsets is None:
-            assert isinstance(self.combinator, str), \
+            assert callable(self.combinator), \
                 "Multiple combination modes are not supported for single channel inference"
             return self._apply_without_offsets(input_, inference)
         else:

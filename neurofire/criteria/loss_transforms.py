@@ -16,10 +16,8 @@ class DropChannels(Transform):
         super().__init__(**super_kwargs)
         assert isinstance(index, (int, list, tuple)),\
             "Only supports channels specified by single number or list / tuple"
-        # TODO implement this
-        if isinstance(index, (list, tuple)):
-            raise NotImplementedError()
-        self.slice_ = self.to_slice(index)
+        self.index = index if isinstance(index, (list, tuple)) else [index]
+        assert all(ind >= 0 for ind in self.index)
 
         if from_ == 'prediction':
             self.drop_in_prediction = True
@@ -33,23 +31,19 @@ class DropChannels(Transform):
         else:
             raise ValueError("%s option for parameter `from_` not supported" % from_)
 
-    # FIXME need slicing magic to make this work for arbitrary indices !
-    @staticmethod
-    def to_slice(index):
-        if isinstance(index, int):
-            # FIXME
-            assert index == 0
-            return np.s_[:, 1:]
-        else:
-            raise NotImplementedError()
+    def _drop_channels(self, tensor):
+        n_channels = tensor.shape[1]
+        assert all(index < n_channels for index in self.index), "%s, %s" % (str(self.index), str(n_channels))
+        keep_axis = [index for index in range(n_channels) if index not in self.index]
+        return tensor[:, keep_axis]
 
     def batch_function(self, tensors):
         assert len(tensors) == 2
         prediction, target = tensors
         if self.drop_in_prediction:
-            prediction = prediction[self.slice_]
+            prediction = self._drop_channels(prediction)
         if self.drop_in_target:
-            target = target[self.slice_]
+            target = self._drop_channels(target)
         return prediction, target
 
 
@@ -77,20 +71,49 @@ class SoftmaxPrediction(Transform):
         return F.softmax(prediction, dim=1), target
 
 
+class SigmoidPrediction(Transform):
+    """
+    """
+    def __init__(self, **super_kwargs):
+        super().__init__(**super_kwargs)
+
+    def batch_function(self, tensors):
+        assert len(tensors) == 2
+        prediction, target = tensors
+        return torch.sigmoid(prediction), target
+
+
 class OrdinalToOneHot(Transform):
     """
     """
-    def __init__(self, n_classes, **super_kwargs):
+    def __init__(self, n_classes, ignore_label=None, **super_kwargs):
         super().__init__(**super_kwargs)
-        self.n_classes = n_classes
+        if isinstance(n_classes, int):
+            self.n_classes = n_classes
+            self.classes = list(range(n_classes))
+            self.class_to_channel = None
+        elif isinstance(n_classes, (list, tuple)):
+            self.n_classes = len(n_classes)
+            self.classes = n_classes
+            self.class_to_channel = {class_id: chan_id
+                                     for chan_id, class_id in enumerate(self.classes)}
+        else:
+            raise ValueError("Unsupported type %s" % type(n_classes))
+        self.ignore_label = ignore_label
 
     def batch_function(self, tensors):
         assert len(tensors) == 2
         prediction, target = tensors
         assert prediction.shape[1] == self.n_classes
         transformed = torch.zeros_like(prediction)
-        for c in range(self.n_classes):
-            transformed[:, c][target.eq(float(c))] = 1
+        for c in self.classes:
+            chan = c if self.class_to_channel is None else self.class_to_channel[c]
+            transformed[:, chan:chan+1] += target.eq(float(c)).float()
+        # preserve the ignore-label
+        if self.ignore_label is not None:
+            mask = target.eq(float(self.ignore_label))
+            for c in range(self.n_classes):
+                transformed[:, c:c+1][mask] = self.ignore_label
         return prediction, transformed
 
 

@@ -56,7 +56,7 @@ class AffinityVolume(MembraneVolume):
         # Cast to the right dtype
         transforms.add(Cast(self.dtype))
         # Run connected components to shuffle the labels
-        transforms.add(ConnectedComponents3D(label_segmentation=True))
+        transforms.add(ConnectedComponents3D())
         # Make affinity maps
         transforms.add(
             Segmentation2MultiOrderAffinities(dim=self.affinity_dim,
@@ -83,10 +83,8 @@ class SegmentationVolume(HDF5VolumeLoader):
         self.transforms = self.get_transforms()
 
     def get_transforms(self):
-        if (self.apply_on_image):
-            transforms = Compose(ConnectedComponents2D(label_segmentation=True),
-                             Cast(self.dtype))
+        if self.apply_on_image:
+            transforms = Compose(ConnectedComponents2D(), Cast(self.dtype))
         else:
-            transforms = Compose(ConnectedComponents3D(label_segmentation=True),
-                             Cast(self.dtype))
+            transforms = Compose(ConnectedComponents3D(), Cast(self.dtype))
         return transforms
