@@ -30,6 +30,7 @@ def affinity_config_to_transform(**affinity_config):
 class Segmentation2Affinities2or3D(Transform, DtypeMapping):
     def __init__(self, offsets, dtype='float32',
                  retain_mask=False, ignore_label=None,
+                 boundary_label=None,
                  retain_segmentation=False, segmentation_to_binary=False,
                  **super_kwargs):
         assert HAVE_AFFOGATO, "Couldn't find 'affogato' module, affinity calculation is not available"
@@ -42,6 +43,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         self.dtype = dtype
         self.retain_mask = retain_mask
         self.ignore_label = ignore_label
+        self.boundary_label = boundary_label
         self.retain_segmentation = retain_segmentation
         self.segmentation_to_binary = segmentation_to_binary
         assert not (self.retain_segmentation and self.segmentation_to_binary), "Currently not supported"
@@ -57,11 +59,22 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         # print("affs: in shape", tensor.shape)
         if self.ignore_label is not None:
             # output.shape = (C, Z, Y, X)
+            # Real affinities: boundaries are zero, inner parts at one
+            # Mask indicates valid affinities (1) and invalid ones (0)
             output, mask = compute_affinities(tensor, self.offsets,
                                               ignore_label=self.ignore_label,
                                               have_ignore_label=True)
         else:
             output, mask = compute_affinities(tensor, self.offsets)
+        
+        if self.boundary_label is not None:
+            # mask_not_on_boundary highlights pixels involving a boundary (and invalid ones at the border,
+            # but those are anyway ignored by the other ignore mask):
+            _, mask_not_on_boundary = compute_affinities(tensor, self.offsets,
+                                              ignore_label=self.boundary_label,
+                                              have_ignore_label=True)
+            # Set to zero all affinities involving a boundary:
+            output = output * mask_not_on_boundary
 
         # FIXME what does this do, need to refactor !
         # hack for platyneris data
@@ -111,6 +124,103 @@ class Segmentation2Affinities(Segmentation2Affinities2or3D):
     def volume_function(self, tensor):
         assert tensor.ndim==3
         output = self.input_function(tensor)
+        return output
+
+
+class Segmentation2AffinitiesDynamicOffsets(Segmentation2Affinities):
+    def __init__(self, nb_offsets=1, max_offset_range=(1,30,30), min_offset_range=(0,0,0),
+                 normalize_offsets=True, allowed_offsets=None,
+                 **super_kwargs):
+        super(Segmentation2AffinitiesDynamicOffsets, self).__init__(offsets=[[1,1,1]], **super_kwargs)
+        assert len(max_offset_range) == 3
+        self.min_offset_range = min_offset_range
+        self.max_offset_range = max_offset_range
+        self.allowed_offsets = allowed_offsets
+
+        assert nb_offsets == 1, "Not sure what the CNN should do with more than one..."
+        self.nb_offsets = nb_offsets
+        self.normalize_offsets = normalize_offsets
+
+
+    def build_random_variables(self):
+        if self.allowed_offsets is None:
+            offsets = [[np.random.choice([-1, 1]) * np.random.randint(self.min_offset_range[i], self.max_offset_range[i]+1) for i in range(3)] for _ in range(self.nb_offsets)]
+        else:
+            offsets = [
+                [np.random.choice([-1, 1]) * np.random.choice(self.allowed_offsets[i], size=1)
+                 for i in range(3)] for _ in range(self.nb_offsets)]
+        self.set_random_variable("offsets", offsets)
+
+    def batch_function(self, batch):
+        assert len(batch) % 2 == 0, "Assuming to have equal number of inputs and targets!"
+        nb_inputs = int(len(batch) / 2)
+
+        assert batch[nb_inputs].ndim == 3
+        self.build_random_variables()
+        random_offset = self.get_random_variable('offsets')
+        affinities = self.dyn_input_function(batch[nb_inputs], random_offset)
+
+        # Concatenate offsets at the end:
+        if self.normalize_offsets:
+            normalized_offsets = (np.array(random_offset) / np.array(self.max_offset_range)).flatten()
+        else:
+            normalized_offsets = np.array(random_offset).flatten().astype('float32')
+
+        repeated_offsets = np.rollaxis(np.tile(normalized_offsets, reps=affinities.shape[1:] + (1,)), axis=-1, start=0)
+
+        return batch[:nb_inputs] + (repeated_offsets, affinities)
+
+
+    def dyn_input_function(self, tensor, offsets):
+        # FIXME: is there a bettter way to avoid rewriting this code?
+        # print("affs: in shape", tensor.shape)
+        if self.ignore_label is not None:
+            # output.shape = (C, Z, Y, X)
+            output, mask = compute_affinities(tensor, offsets,
+                                              ignore_label=self.ignore_label,
+                                              have_ignore_label=True)
+        else:
+            output, mask = compute_affinities(tensor, offsets)
+
+        # FIXME what does this do, need to refactor !
+        # hack for platyneris data
+        platy_hack = False
+        if platy_hack:
+            chan_mask = mask[1].astype('bool')
+            output[0][chan_mask] = np.min(output[:2], axis=0)[chan_mask]
+
+            chan_mask = mask[2].astype('bool')
+            output[0][chan_mask] = np.minimum(output[0], output[2])[chan_mask]
+
+        # Cast to be sure
+        if not output.dtype == self.dtype:
+            output = output.astype(self.dtype)
+        #
+        # print("affs: shape before binary", output.shape)
+        if self.segmentation_to_binary:
+            output = np.concatenate((self.to_binary_segmentation(tensor)[None],
+                                     output), axis=0)
+        # print("affs: shape after binary", output.shape)
+
+        # print("affs: shape before mask", output.shape)
+        # We might want to carry the mask along.
+        # If this is the case, we insert it after the targets.
+        if self.retain_mask:
+            mask = mask.astype(self.dtype, copy=False)
+            if self.segmentation_to_binary:
+                mask = np.concatenate(((tensor[None] != self.ignore_label).astype(self.dtype), mask),
+                                      axis=0)
+            output = np.concatenate((output, mask), axis=0)
+        # print("affs: shape after mask", output.shape)
+
+        # We might want to carry the segmentation along for validation.
+        # If this is the case, we insert it before the targets.
+        if self.retain_segmentation:
+            # Add a channel axis to tensor to make it (C, Z, Y, X) before cating to output
+            output = np.concatenate((tensor[None].astype(self.dtype, copy=False), output),
+                                    axis=0)
+
+        # print("affs: out shape", output.shape)
         return output
 
 
