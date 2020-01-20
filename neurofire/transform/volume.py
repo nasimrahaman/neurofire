@@ -1,12 +1,19 @@
 import numpy as np
 
 from inferno.io.transform import Transform
+from scipy.ndimage.morphology import binary_dilation
 
 
 class RandomSlide(Transform):
     """Transform to randomly sample misalignments."""
     def __init__(self, output_image_size=None, max_misalign=None,
+                 index_mask_defected_slices=None,
                  shift_vs_slide_proba=0.5, apply_proba=0.8, **super_kwargs):
+        """
+        Shift: move only one slice
+        Slide: from that point on, move all slices
+        shift_vs_slide_proba: If less then this, shift. If more, slide
+        """
         # Make sure that output image size and max misalign are not both None
         assert not (output_image_size is None and max_misalign is None)
         # Make sure that output image size and max misalign are not set both
@@ -29,6 +36,7 @@ class RandomSlide(Transform):
         # Make sure we have a 2-tuple
         self.shift_vs_slide_proba = shift_vs_slide_proba
         self.apply_proba = apply_proba
+        self.index_mask_defected_slices = index_mask_defected_slices
 
     def build_random_variables(self, num_planes, input_image_size):
         # Compute the available slide leeways. We have two sets of leeways - origin-ward
@@ -52,7 +60,7 @@ class RandomSlide(Transform):
         shift_or_slide = 'shift' if np.random.uniform() < self.shift_vs_slide_proba else 'slide'
         # Select from which plane on to slide
         slide_from = np.random.randint(low=1, high=num_planes)
-        shift_at = np.random.randint(low=0, high=num_planes)
+        shift_at = np.random.randint(low=1, high=num_planes)
         # Write to dict
         self.set_random_variable('shifts', shifts)
         self.set_random_variable('origin', originward_leeways)
@@ -78,6 +86,17 @@ class RandomSlide(Transform):
 
     def batch_function(self, volumes):
         assert isinstance(volumes, (tuple, list))
+        volumes = list(volumes)
+
+        defected_mask = None
+        if self.index_mask_defected_slices is not None:
+            # 1 where a slice was defected
+            defected_mask = volumes.pop(self.index_mask_defected_slices)
+            # We should not slide/shift any neighboring slice to one defected:
+            # (we look at the center of the slice, since there could be some elastic transform)
+            shp = defected_mask.shape
+            defected_mask = binary_dilation(defected_mask[:,int(shp[1]/2),int(shp[2]/2)].astype('bool'))
+
         shape = volumes[0].shape
         if len(volumes) > 1:
             assert all(vv.shape == shape for vv in volumes[1:]), "%s" % ", ".join(str(vv.shape) for vv in volumes)
@@ -89,29 +108,40 @@ class RandomSlide(Transform):
         # TODO would be cleaner to integrate into `build random variables` as well
         apply_shift = np.random.rand() < self.apply_proba
 
+
+
+        apply_to = range(len(volumes)) if self._apply_to is None else self._apply_to
+
         if apply_shift:
+            # Check if the slice is not
+
             # Get random variables
             shift_or_slide = self.get_random_variable('shift_or_slide')
             # Shift or slide?
             if shift_or_slide == 'shift':
                 # Shift
                 shift_at = self.get_random_variable('shift_at')
-                # Don't shift if plane_num doesn't equal shift_at
-                out_volumes = tuple(np.array([self.shift_and_crop(image=plane,
-                                                                  zero_shift=(plane_num != shift_at))
-                                             for plane_num, plane in enumerate(volume)]) for volume in volumes)
+                is_defected = defected_mask[shift_at] if defected_mask is not None else False
+
+                if not is_defected:
+                    # Don't shift if plane_num doesn't equal shift_at
+                    return tuple(np.array([self.shift_and_crop(image=plane,
+                                                                      zero_shift=(plane_num != shift_at) or
+                                                                                 (nb_vol not in apply_to))
+                                                 for plane_num, plane in enumerate(volume)]) for nb_vol, volume in enumerate(volumes))
             else:
                 # Slide
                 slide_from = self.get_random_variable('slide_from')
-                # Don't shift if plane_num isn't larger than or equal to slide_from
-                out_volumes = tuple(np.array([self.shift_and_crop(image=plane,
-                                                                  zero_shift=(plane_num < slide_from))
-                                             for plane_num, plane in enumerate(volume)]) for volume in volumes)
+                is_defected = defected_mask[slide_from] if defected_mask is not None else False
 
-        else:
-            out_volumes = tuple(np.array([self.shift_and_crop(image=plane, zero_shift=True)
+                if not is_defected:
+                    # Don't shift if plane_num isn't larger than or equal to slide_from
+                    return tuple(np.array([self.shift_and_crop(image=plane,
+                                                                      zero_shift=(plane_num < slide_from))
+                                                 for plane_num, plane in enumerate(volume)]) for nb_vol, volume in enumerate(volumes))
+
+        return tuple(np.array([self.shift_and_crop(image=plane, zero_shift=True)
                                          for plane in volume]) for volume in volumes)
-        return out_volumes
 
 
 class RejectNonZeroThreshold(object):
