@@ -78,10 +78,8 @@ class NegativeExponentialDistanceTransform(Transform):
 class ConnectedComponents2D(Transform):
     """
     Apply connected components on segmentation in 2D.
-    # FIXME: temporary hack
-
     """
-    def __init__(self, label_components=True, preserved_label=None, **super_kwargs):
+    def __init__(self, preserved_label=None, **super_kwargs):
         """
         Parameters
         ----------
@@ -89,13 +87,12 @@ class ConnectedComponents2D(Transform):
             Keyword arguments to the super class.
         """
         self.preserved_label = preserved_label
-        self.label_components = label_components
         super(ConnectedComponents2D, self).__init__(**super_kwargs)
 
     def image_function(self, image):
         # FIXME: otherwise we cannot use negative numbers
         image = image.astype('int64')
-        relabeled_image = label(image) if self.label_components else image
+        relabeled_image = label(image)
         if self.preserved_label is not None:
             for pres_label, set_to in zip(self.preserved_label["label"], self.preserved_label["reset_to"]):
                 relabeled_image[image == pres_label] = set_to
@@ -106,10 +103,8 @@ class ConnectedComponents2D(Transform):
 class ConnectedComponents3D(Transform):
     """
     Apply connected components on segmentation in 3D.
-
-    # FIXME: temporary hack
     """
-    def __init__(self, label_components=True, preserved_label=None, **super_kwargs):
+    def __init__(self, preserved_label=None, **super_kwargs):
         """
         Parameters
         ----------
@@ -117,13 +112,12 @@ class ConnectedComponents3D(Transform):
             Keyword arguments to the super class.
         """
         self.preserved_label = preserved_label
-        self.label_components = label_components
         super(ConnectedComponents3D, self).__init__(**super_kwargs)
 
     def volume_function(self, volume):
         # FIXME: otherwise we cannot use negative numbers
         volume = volume.astype('int64')
-        relabeled_volume = label(volume) if self.label_components else volume
+        relabeled_volume = label(volume)
             
         if self.preserved_label is not None:
             for pres_label, set_to in zip(self.preserved_label["label"], self.preserved_label["reset_to"]):

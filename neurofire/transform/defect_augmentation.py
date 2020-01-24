@@ -243,6 +243,10 @@ class DefectAugmentation(Transform):
                     # tensor[z] *= 2
                     next_to_be_skipped = 3
                     continue
+                if z + 2 + z_offset in self.ignore_slice_list:
+                    # tensor[z] *= 2
+                    next_to_be_skipped = 4
+                    continue
 
 
             # We never apply defects to the first/last slice:

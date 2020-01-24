@@ -32,8 +32,8 @@ class SegmentationVolume(io.HDF5VolumeLoader):
 
     def get_transforms(self):
         transforms = []
-        transforms.append(ConnectedComponents3D(preserved_label=self.preserved_label,
-                              label_components=self.label_volume))
+        if self.label_volume:
+            transforms.append(ConnectedComponents3D(preserved_label=self.preserved_label))
         if self.binarize:
             transforms.append(BinarizeSegmentation())
         transforms.append(Cast(self.dtype))
