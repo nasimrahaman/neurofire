@@ -5,7 +5,7 @@ from ..criteria.multi_scale_loss import Downsampler
 from .segmentation import DtypeMapping
 
 try:
-    from affogato.affinities import compute_multiscale_affinities, compute_affinities
+    from affogato.affinities import compute_multiscale_affinities, compute_affinities, compute_affinities_with_glia
 except ImportError:
     compute_affinities, compute_multiscale_affinities = None, None
 
@@ -30,6 +30,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
     def __init__(self, offsets, dtype='float32',
                  retain_mask=False, ignore_label=None,
                  boundary_label=None,
+                 glia_label=None,
                  retain_segmentation=False, segmentation_to_binary=False,
                  map_to_foreground=True, learn_ignore_transitions=False,
                  **super_kwargs):
@@ -45,6 +46,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         self.retain_mask = retain_mask
         self.ignore_label = ignore_label
         self.boundary_label = boundary_label
+        self.glia_label = glia_label
         self.retain_segmentation = retain_segmentation
         self.segmentation_to_binary = segmentation_to_binary
         assert not (self.retain_segmentation and self.segmentation_to_binary),\
@@ -73,26 +75,35 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
 
     def input_function(self, tensor):
         # print("affs: in shape", tensor.shape)
-        if self.ignore_label is not None:
-            # output.shape = (C, Z, Y, X)
-            # Real affinities: boundaries are zero, inner parts at one
-            # Mask indicates valid affinities (1) and invalid ones (0)
-            output, mask = compute_affinities(tensor, self.offsets,
-                                              ignore_label=self.ignore_label,
-                                              have_ignore_label=True)
-            if self.learn_ignore_transitions:
-                output, mask = self.include_ignore_transitions(output, mask, tensor)
+        if self.glia_label is not None or self.boundary_label is not None:
+            various_masks = tensor[1]
+            updated_labels = tensor[0].astype('int64')
+            bnd_label = self.boundary_label
+            if self.boundary_label is not None:
+                updated_labels[various_masks == self.boundary_label] = -1
+                bnd_label = -1
+            glia_label = self.glia_label
+            if self.glia_label is not None:
+                updated_labels[various_masks == self.glia_label] = -2
+                glia_label = -2
+            output, mask = compute_affinities_with_glia(updated_labels.astype('int64'), self.offsets,
+                                 ignore_label=self.ignore_label,
+                                 boundary_label=bnd_label,
+                                 glia_label=glia_label)
+            tensor = tensor[0]
         else:
-            output, mask = compute_affinities(tensor, self.offsets)
-        
-        if self.boundary_label is not None:
-            # mask_not_on_boundary highlights pixels involving a boundary (and invalid ones at the border,
-            # but those are anyway ignored by the other ignore mask):
-            _, mask_not_on_boundary = compute_affinities(tensor, self.offsets,
-                                              ignore_label=self.boundary_label,
-                                              have_ignore_label=True)
-            # Set to zero all affinities involving a boundary:
-            output = output * mask_not_on_boundary
+            if self.ignore_label is not None:
+                # output.shape = (C, Z, Y, X)
+                # Real affinities: boundaries are zero, inner parts at one
+                # Mask indicates valid affinities (1) and invalid ones (0)
+                output, mask = compute_affinities(tensor, self.offsets,
+                                                  ignore_label=self.ignore_label,
+                                                  have_ignore_label=True)
+                if self.learn_ignore_transitions:
+                    output, mask = self.include_ignore_transitions(output, mask, tensor)
+            else:
+                output, mask = compute_affinities(tensor, self.offsets)
+
 
         # FIXME what does this do, need to refactor !
         # hack for platyneris data
@@ -143,10 +154,16 @@ class Segmentation2Affinities(Segmentation2Affinities2or3D):
     def __init__(self, **super_kwargs):
         super(Segmentation2Affinities, self).__init__(**super_kwargs)
 
-    def volume_function(self, tensor):
-        assert tensor.ndim == 3
+    def tensor_function(self, tensor):
+        assert tensor.ndim == 4
+        if self.boundary_label is None and self.glia_label is None:
+            assert tensor.shape[0] == 1
+            tensor = tensor[0]
+        else:
+            assert tensor.shape[0] == 2
         output = self.input_function(tensor)
         return output
+
 
 
 class Segmentation2AffinitiesDynamicOffsets(Segmentation2Affinities):
