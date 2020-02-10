@@ -31,6 +31,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
                  retain_mask=False, ignore_label=None,
                  boundary_label=None,
                  glia_label=None,
+                 retain_glia_mask=False,
                  retain_segmentation=False, segmentation_to_binary=False,
                  map_to_foreground=True, learn_ignore_transitions=False,
                  **super_kwargs):
@@ -47,6 +48,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         self.ignore_label = ignore_label
         self.boundary_label = boundary_label
         self.glia_label = glia_label
+        self.retain_glia_mask = retain_glia_mask
         self.retain_segmentation = retain_segmentation
         self.segmentation_to_binary = segmentation_to_binary
         assert not (self.retain_segmentation and self.segmentation_to_binary),\
@@ -145,6 +147,9 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
             # Add a channel axis to tensor to make it (C, Z, Y, X) before cating to output
             output = np.concatenate((tensor[None].astype(self.dtype, copy=False), output),
                                     axis=0)
+
+        if self.retain_glia_mask and self.glia_label is not None:
+            output = np.concatenate((output, np.expand_dims((various_masks == self.glia_label).astype('float32'), axis=0)), axis=0)
 
         # print("affs: out shape", output.shape)
         return output

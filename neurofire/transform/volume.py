@@ -7,7 +7,7 @@ from scipy.ndimage.morphology import binary_dilation
 class RandomSlide(Transform):
     """Transform to randomly sample misalignments."""
     def __init__(self, output_image_size=None, max_misalign=None,
-                 targets_have_defected_mask=False,
+                 dont_slide_defected_slices=True,
                  defected_label=None,
                  shift_vs_slide_proba=0.5, apply_proba=0.8, **super_kwargs):
         """
@@ -37,7 +37,7 @@ class RandomSlide(Transform):
         # Make sure we have a 2-tuple
         self.shift_vs_slide_proba = shift_vs_slide_proba
         self.apply_proba = apply_proba
-        self.targets_have_defected_mask = targets_have_defected_mask
+        self.dont_slide_defected_slices = dont_slide_defected_slices
         self.defected_label = defected_label
 
     def build_random_variables(self, num_planes, input_image_size):
@@ -98,7 +98,7 @@ class RandomSlide(Transform):
         # I need to handle defected mask, shift should not change GT, etc...
         assert len(tensors) == 2
         defected_mask = None
-        if self.targets_have_defected_mask:
+        if self.dont_slide_defected_slices:
             assert self.defected_label is not None
             defected_mask = tensors[1][1] == self.defected_label
             defected_mask = defected_mask.max(axis=-1).max(axis=-1)
