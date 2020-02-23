@@ -32,6 +32,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
                  boundary_label=None,
                  glia_label=None,
                  retain_glia_mask=False,
+                 train_affs_on_glia=False,
                  retain_segmentation=False, segmentation_to_binary=False,
                  map_to_foreground=True, learn_ignore_transitions=False,
                  **super_kwargs):
@@ -48,6 +49,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         self.ignore_label = ignore_label
         self.boundary_label = boundary_label
         self.glia_label = glia_label
+        self.train_affs_on_glia = train_affs_on_glia
         self.retain_glia_mask = retain_glia_mask
         self.retain_segmentation = retain_segmentation
         self.segmentation_to_binary = segmentation_to_binary
@@ -84,10 +86,12 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
             if self.boundary_label is not None:
                 updated_labels[various_masks == self.boundary_label] = -1
                 bnd_label = -1
-            glia_label = self.glia_label
-            if self.glia_label is not None:
+            if not self.train_affs_on_glia:
+                assert self.glia_label is not None
                 updated_labels[various_masks == self.glia_label] = -2
                 glia_label = -2
+            else:
+                glia_label = None
             output, mask = compute_affinities_with_glia(updated_labels.astype('int64'), self.offsets,
                                  ignore_label=self.ignore_label,
                                  boundary_label=bnd_label,
@@ -148,7 +152,8 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
             output = np.concatenate((tensor[None].astype(self.dtype, copy=False), output),
                                     axis=0)
 
-        if self.retain_glia_mask and self.glia_label is not None:
+        if self.retain_glia_mask:
+            assert self.glia_label is not None
             output = np.concatenate((output, np.expand_dims((various_masks == self.glia_label).astype('float32'), axis=0)), axis=0)
 
         # print("affs: out shape", output.shape)
