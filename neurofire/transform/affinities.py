@@ -33,6 +33,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
                  glia_label=None,
                  retain_glia_mask=False,
                  train_affs_on_glia=False,
+                 retain_various_masks=False,
                  retain_segmentation=False, segmentation_to_binary=False,
                  map_to_foreground=True, learn_ignore_transitions=False,
                  **super_kwargs):
@@ -51,6 +52,7 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         self.glia_label = glia_label
         self.train_affs_on_glia = train_affs_on_glia
         self.retain_glia_mask = retain_glia_mask
+        self.retain_various_masks = retain_various_masks
         self.retain_segmentation = retain_segmentation
         self.segmentation_to_binary = segmentation_to_binary
         assert not (self.retain_segmentation and self.segmentation_to_binary),\
@@ -148,8 +150,15 @@ class Segmentation2Affinities2or3D(Transform, DtypeMapping):
         # We might want to carry the segmentation along for validation.
         # If this is the case, we insert it before the targets.
         if self.retain_segmentation:
+            # TODO: fix this mess
             # Add a channel axis to tensor to make it (C, Z, Y, X) before cating to output
-            output = np.concatenate((tensor[None].astype(self.dtype, copy=False), output),
+            if self.retain_various_masks:
+                output = np.concatenate((tensor[None].astype(self.dtype, copy=False),
+                                         various_masks[None].astype(self.dtype, copy=False),
+                                         output),
+                                        axis=0)
+            else:
+                output = np.concatenate((tensor[None].astype(self.dtype, copy=False), output),
                                     axis=0)
 
         if self.retain_glia_mask:
