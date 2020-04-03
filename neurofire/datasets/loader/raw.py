@@ -39,13 +39,12 @@ class RawVolume(io.HDF5VolumeLoader):
     def __init__(self, path, path_in_file=None,
                  data_slice=None, name=None, dtype='float32',
                  mean=None, std=None, sigma=None, zero_mean_unit_variance=True,
-                 p_augment_ws=0., apply_to=(0, ), **slicing_config):
+                 p_augment_ws=0., **slicing_config):
         super().__init__(path=path, path_in_h5_dataset=path_in_file,
                          data_slice=data_slice, name=name, **slicing_config)
         # Record attributes
         assert isinstance(dtype, str)
         self.dtype = dtype
-        self.apply_to = apply_to
         # Make transforms
         if name is not None:
             mean = mean[name] if isinstance(mean, dict) else mean
@@ -60,19 +59,19 @@ class RawVolume(io.HDF5VolumeLoader):
 
     def get_transforms(self, mean, std, sigma,
                        p_augment_ws, zero_mean_unit_variance):
-        transforms = Compose(Cast(self.dtype, apply_to=self.apply_to))
+        transforms = Compose(Cast(self.dtype))
         # add normalization (zero mean / unit variance)
         if zero_mean_unit_variance:
-            transforms.add(Normalize(mean=mean, std=std, apply_to=self.apply_to))
+            transforms.add(Normalize(mean=mean, std=std))
         else:
             transforms.add(Normalize01())
         # add noise transform if specified
         if sigma is not None:
-            transforms.add(AdditiveNoise(sigma=sigma, apply_to=self.apply_to))
+            transforms.add(AdditiveNoise(sigma=sigma))
         # add watershed super-pixel augmentation is specified
         if p_augment_ws > 0.:
             assert WatershedAugmentation is not None
-            transforms.add(WatershedAugmentation(p_augment_ws, invert=True, apply_to=self.apply_to))
+            transforms.add(WatershedAugmentation(p_augment_ws, invert=True))
         return transforms
 
 
@@ -114,7 +113,7 @@ class RawVolumeWithDefectAugmentation(RawVolume):
                  name=None, path_in_file=None,
                  data_slice=None, dtype='float32',
                  ignore_slice_list=None, mean=None, std=None,
-                 sigma=None, zero_mean_unit_variance=True, apply_to=(0, ),
+                 sigma=None, zero_mean_unit_variance=True,
                  p_augment_ws=0., **slicing_config):
 
         super().__init__(path=path, path_in_file=path_in_file,
@@ -122,13 +121,15 @@ class RawVolumeWithDefectAugmentation(RawVolume):
                          dtype=dtype, mean=mean, std=std, sigma=sigma,
                          p_augment_ws=p_augment_ws,
                          zero_mean_unit_variance=zero_mean_unit_variance,
-                         apply_to=apply_to,
                          **slicing_config)
 
         defect_augmentation_config = yaml2dict(defect_augmentation_config)
         defect_augmentation_config.update({'ignore_slice_list': ignore_slice_list})
         self.defect_augmentation = DefectAugmentation.from_config(defect_augmentation_config)
         self.cast = Cast(self.dtype)
+
+        # Check if we should keep track of defected slices:
+        self.keep_track_defected_slices = len(self.defect_augmentation.keep_track_of) > 0
 
     def __getitem__(self, index):
         # Casting to int would allow index to be IndexSpec objects.
@@ -144,11 +145,16 @@ class RawVolumeWithDefectAugmentation(RawVolume):
         # otherwise they screw with the normalization !
         z_offset = slices[0].start
         vol = self.defect_augmentation(vol, z_offset=z_offset)
-        vol = [vol] if not isinstance(vol, (list, tuple)) else vol
 
         # apply the normal transformations (including normalization)
         if self.transforms is not None:
-            vol = self.transforms(*vol)
+            if self.keep_track_defected_slices:
+                if isinstance(vol, tuple):
+                    vol = list(vol)
+                assert isinstance(vol, list)
+                vol[0] = self.transforms(vol[0])
+            else:
+                vol = self.transforms(vol)
 
         if self.return_index_spec:
             return vol, IndexSpec(index=index, base_sequence_at_index=slices)

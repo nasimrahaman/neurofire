@@ -16,7 +16,6 @@ class BinarizeSegmentation(Transform):
 class SegmentationVolume(io.HDF5VolumeLoader):
     def __init__(self, path, path_in_file,
                  data_slice=None, name=None, dtype='float32',
-                 preserved_label=None, 
                  label_volume=True, binarize=False, **slicing_config):
         # Init super
         super(SegmentationVolume, self).__init__(path=path, path_in_h5_dataset=path_in_file,
@@ -24,7 +23,6 @@ class SegmentationVolume(io.HDF5VolumeLoader):
 
         assert isinstance(dtype, str)
         self.dtype = dtype
-        self.preserved_label = preserved_label
         self.label_volume = label_volume
         self.binarize = binarize
         # Make transforms
@@ -33,7 +31,7 @@ class SegmentationVolume(io.HDF5VolumeLoader):
     def get_transforms(self):
         transforms = []
         if self.label_volume:
-            transforms.append(ConnectedComponents3D(preserved_label=self.preserved_label))
+            transforms.append(ConnectedComponents3D())
         if self.binarize:
             transforms.append(BinarizeSegmentation())
         transforms.append(Cast(self.dtype))

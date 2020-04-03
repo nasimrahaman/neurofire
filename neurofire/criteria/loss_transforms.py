@@ -197,27 +197,17 @@ class ApplyAndRemoveMask(Transform):
 
 class MaskTransitionToIgnoreLabel(Transform):
     """Applies a mask where the transition to zero label is masked for the respective offsets."""
+
     def __init__(self, offsets, ignore_label=0,
-                 mode='apply_mask_to_batch',
-                 targets_are_inverted=True,
-                skip_channels=None,
-                 **super_kwargs):
-        """
-        Added additional parameter.
-        :param mode: the default is 'apply_mask_to_batch'. An additional mode is 'return_mask'.
-        """
+                 skip_channels=None, **super_kwargs):
         super(MaskTransitionToIgnoreLabel, self).__init__(**super_kwargs)
         assert isinstance(offsets, (list, tuple))
         assert len(offsets) > 0
         self.dim = len(offsets[0])
         self.offsets = offsets
-        self.targets_are_inverted = targets_are_inverted
         assert isinstance(ignore_label, numbers.Integral)
         self.ignore_label = ignore_label
         self.skip_channels = skip_channels
-
-        assert mode == 'apply_mask_to_batch' or mode == 'return_mask', "Mode not recognized"
-        self.mode = mode
 
     # TODO explain what the hell is going on here ...
     @staticmethod
@@ -286,12 +276,10 @@ class MaskTransitionToIgnoreLabel(Transform):
 
     # get the full mask tensor
     def full_mask_tensor(self, segmentation):
-        with torch.no_grad():
-            # get the individual mask for the offsets
-            masks = [self.mask_tensor_for_offset(segmentation, offset) for offset in self.offsets]
-            # Concatenate to one tensor and convert tensor to variable
-            out = torch.cat(tuple(masks), 1)
-        return out
+        # get the individual mask for the offsets
+        masks = [self.mask_tensor_for_offset(segmentation, offset) for offset in self.offsets]
+        # Concatenate to one tensor and convert tensor to variable
+        return torch.cat(tuple(masks), 1)
 
     def batch_function(self, tensors):
         assert len(tensors) == 2
@@ -306,38 +294,19 @@ class MaskTransitionToIgnoreLabel(Transform):
         full_mask_variable = self.full_mask_tensor(segmentation)
         full_mask_variable.requires_grad = False
 
-        if self.mode == 'apply_mask_to_batch':
-            # FIXME: should we not apply the mask also to the targets...?
-            # Mask prediction with master mask
-            masked_prediction = prediction * full_mask_variable
-            targ_affinities = target[:, 1:]
-            # Legacy:
-            self.targets_are_inverted = self.targets_are_inverted if hasattr(self, 'targets_are_inverted') else True
-
-            if self.targets_are_inverted:
-                targ_affinities = 1 - targ_affinities
-                targ_affinities = targ_affinities * full_mask_variable
-                targ_affinities = 1 - targ_affinities
-            else:
-                targ_affinities = targ_affinities * full_mask_variable
-            target = torch.cat((segmentation, targ_affinities), dim=1)
-            return masked_prediction, target
-        elif self.mode == 'return_mask':
-            return full_mask_variable
+        # Mask prediction with master mask
+        masked_prediction = prediction * full_mask_variable
+        return masked_prediction, target
 
 
 class InvertTarget(Transform):
-    def __init__(self, target_has_segm=False, **super_kwargs):
+    def __init__(self, **super_kwargs):
         super(InvertTarget, self).__init__(**super_kwargs)
-        self.target_has_segm = target_has_segm
 
     def batch_function(self, tensors):
-        target = tensors[-1]
-        if self.target_has_segm:
-            target[1:] = 1. - target[1:]
-        else:
-            target = 1. - target
-        return tensors[:-1] + (target, )
+        assert len(tensors) == 2
+        prediction, target = tensors
+        return prediction, 1. - target
 
 
 class InvertPrediction(Transform):

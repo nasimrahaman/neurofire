@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from torch.autograd import Variable
 
 from scipy.ndimage import convolve
 from scipy.ndimage.morphology import distance_transform_edt
@@ -9,8 +8,6 @@ from skimage.morphology import label
 from inferno.io.transform import Transform
 import inferno.utils.python_utils as pyu
 import inferno.utils.torch_utils as tu
-
-from ..criteria.loss_transforms import MaskTransitionToIgnoreLabel
 
 import logging
 logger = logging.getLogger(__name__)
@@ -79,67 +76,34 @@ class ConnectedComponents2D(Transform):
     """
     Apply connected components on segmentation in 2D.
     """
-    def __init__(self, preserved_label=None, **super_kwargs):
+    def __init__(self, **super_kwargs):
         """
         Parameters
         ----------
         super_kwargs : dict
             Keyword arguments to the super class.
         """
-        self.preserved_label = preserved_label
         super(ConnectedComponents2D, self).__init__(**super_kwargs)
 
     def image_function(self, image):
-        # FIXME: otherwise we cannot use negative numbers
-        image = image.astype('int64')
-        relabeled_image = label(image)
-        if self.preserved_label is not None:
-            for pres_label, set_to in zip(self.preserved_label["label"], self.preserved_label["reset_to"]):
-                relabeled_image[image == pres_label] = set_to
-        return relabeled_image
-
+        return label(image)
 
 
 class ConnectedComponents3D(Transform):
     """
     Apply connected components on segmentation in 3D.
     """
-    def __init__(self, preserved_label=None, **super_kwargs):
+    def __init__(self, **super_kwargs):
         """
         Parameters
         ----------
         super_kwargs : dict
             Keyword arguments to the super class.
         """
-        self.preserved_label = preserved_label
         super(ConnectedComponents3D, self).__init__(**super_kwargs)
 
     def volume_function(self, volume):
-        # FIXME: otherwise we cannot use negative numbers
-        volume = volume.astype('int64')
-        relabeled_volume = label(volume)
-            
-        if self.preserved_label is not None:
-            for pres_label, set_to in zip(self.preserved_label["label"], self.preserved_label["reset_to"]):
-                relabeled_volume[volume == pres_label] = set_to
-        return relabeled_volume
-
-
-def get_boundary_offsets(boundary_erode_segmentation):
-    # print("WARNING: boundary erosion not properly working with ignore label")
-    # print("WARNING: boundary erosion has artifacts at the image border")
-    assert isinstance(boundary_erode_segmentation, list)
-    dim = len(boundary_erode_segmentation)
-
-    # Center the offset to grow a symmetric boundary:
-    boundary_offsets = [[bound_offset if i == j else 0 for j in range(dim)] for i, bound_offset in
-                        enumerate(boundary_erode_segmentation) if bound_offset != 0]
-    negative_boundary_offsets = [[-int(val / 2) for val in off] for off in boundary_offsets]
-    boundary_offsets = [[int(val / 2) if val % 2 == 0 else int(val / 2) + 1 for val in off] for off in boundary_offsets]
-
-    # First we compute the boundary:
-    return boundary_offsets + [off for off in negative_boundary_offsets if np.array(off).sum() != 0]
-
+        return label(volume)
 
 
 # TODO refactor affogato functionality to public repo and make this obsolete
@@ -150,20 +114,10 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
 
     def __init__(self, offsets, dtype='float32',
                  add_singleton_channel_dimension=False,
-                 use_gpu=False,
-                 retain_segmentation=False,
-                 boundary_erode_segmentation=None,
-                 return_eroded_labels=False,
-                 ignore_label=0,
-                 **super_kwargs):
-        """
-        :param boundary_erode_segmentation: If not None, it is a list with len==dim specifying the thickness
-        of the erosion in every dimension.
-        """
+                 retain_segmentation=False, **super_kwargs):
         super(Segmentation2AffinitiesFromOffsets, self).__init__(**super_kwargs)
         assert pyu.is_listlike(offsets), "`offsets` must be a list or a tuple."
         assert len(offsets) > 0, "`offsets` must not be empty."
-        assert ignore_label >= 0
 
         dim = len(offsets[0])
         assert dim in (2, 3), "Affinities are only supported for 2d and 3d input"
@@ -172,28 +126,6 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
         self.add_singleton_channel_dimension = bool(add_singleton_channel_dimension)
         self.offsets = offsets if isinstance(offsets, int) else tuple(offsets)
         self.retain_segmentation = retain_segmentation
-
-        self.erode_boundary = True if boundary_erode_segmentation is not None else False
-        self.return_eroded_labels = return_eroded_labels
-        if boundary_erode_segmentation is not None:
-            assert len(boundary_erode_segmentation) == dim
-            boundary_offsets = get_boundary_offsets(boundary_erode_segmentation)
-
-            self.compute_erosion_boundary = Segmentation2AffinitiesFromOffsets(dim, boundary_offsets,
-                                               dtype=dtype,
-                                               use_gpu=use_gpu,
-                                               retain_segmentation=False,
-                                               add_singleton_channel_dimension=add_singleton_channel_dimension,
-                                               boundary_erode_segmentation=None,
-                                               **super_kwargs)
-
-            self.mask_ignore_label = MaskTransitionToIgnoreLabel(boundary_offsets, ignore_label=ignore_label, mode='return_mask',
-                                                                     targets_are_inverted=True)
-
-            # Then we mask any transition to the boundary:
-            self.mask_erosion_boundary = MaskTransitionToIgnoreLabel(offsets, ignore_label=0,mode='return_mask',
-                                        targets_are_inverted=True)
-        self.boundary_erode_segmentation = boundary_erode_segmentation
 
     def convolve_with_shift_kernel(self, tensor, offset):
         if isinstance(tensor, np.ndarray):
@@ -306,61 +238,11 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
 
     def tensor_function(self, tensor):
         if isinstance(tensor, np.ndarray):
-            output = self._tensor_function_numpy(tensor)
+            return self._tensor_function_numpy(tensor)
         elif torch.is_tensor(tensor):
-            output =  self._tensor_function_torch(tensor)
+            return self._tensor_function_torch(tensor)
         else:
             raise NotImplementedError("Only support np.ndarray and torch.tensor, got %s" % type(tensor))
-
-        if self.erode_boundary:
-            assert torch.is_tensor(tensor), "Numpy boundary erosion not implemented yet"
-            output = self._compute_boundary_erosion(tensor, output)
-
-        return output
-
-    def _compute_boundary_erosion(self, tensor, output):
-        # FIXME: problem with ignore label... There will be part of the boundary with ignore_label now that will not be masked...!
-        # FIXME: a boundary is detected also at the border of the image!
-
-        # First we compute the boundary mask: (should be zero when there is a boundary)
-        boundary_affs = self.compute_erosion_boundary.tensor_function(tensor).byte()
-
-
-
-        if self.add_singleton_channel_dimension:
-            tensor = tensor[None, ...]
-
-        # The mask should be zero when an ignore label is involved:
-        ignore_mask = self.mask_ignore_label.full_mask_tensor(
-            Variable(tensor[0].float()[None, None, ...], requires_grad=False))[0].byte()
-
-
-        boundary_mask = torch.ones(tensor[0].size()).byte()
-        if boundary_affs.is_cuda:
-            boundary_mask = boundary_mask.cuda()
-            ignore_mask = ignore_mask.cuda()
-        for i in range(boundary_affs.size()[0]):
-            boundary_mask = boundary_mask * (1 - (boundary_affs[i] == 0) * (ignore_mask[i] == 1))
-
-
-
-        segmentation_labels = tensor[0].float() + 1
-        segmentation_labels = segmentation_labels * boundary_mask.float()
-
-        # Then we set to 'active/split' the affinities that involves the boundary:
-        # The mask is zero when a boundary is involved:
-        affs_mask = self.mask_erosion_boundary.full_mask_tensor(Variable(segmentation_labels[None, None, ...], requires_grad=False))[0]
-        if self.retain_segmentation:
-            output[1:] = output[1:] * affs_mask
-            if self.return_eroded_labels:
-                output[0] = segmentation_labels
-        else:
-            output = output * affs_mask
-
-
-
-
-        return output
 
     def _tensor_function_torch(self, tensor):
         # Add singleton channel dimension if requested
@@ -395,10 +277,6 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
             output = torch.cat((tensor, binarized_affinities), 0)
         else:
             output = binarized_affinities
-
-        if self.erode_boundary:
-            pass
-
         return output
 
     def _tensor_function_numpy(self, tensor):
@@ -436,7 +314,4 @@ class Segmentation2AffinitiesFromOffsets(Transform, DtypeMapping):
             output = np.concatenate((tensor, binarized_affinities), axis=0)
         else:
             output = binarized_affinities
-
-        if self.erode_boundary:
-            raise NotImplementedError()
         return output
