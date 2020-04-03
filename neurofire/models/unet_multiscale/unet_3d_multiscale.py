@@ -1,6 +1,31 @@
 import torch.nn as nn
+from ..unet.base import XcoderResidual
+from ..unet.unet_3d import Output, CONV_TYPES, Encoder, Decoder, get_sampler, get_pooler
 from .base import UNetSkeletonMultiscale
-from ..unet.unet_3d import Output, CONV_TYPES, Encoder, Decoder, Base, EncoderResidual, DecoderResidual, BaseResidual, get_sampler
+from inferno.extensions.layers.convolutional import ConvELU3D
+from inferno.extensions.layers.sampling import AnisotropicPool, AnisotropicUpsample
+
+
+class EncoderResidual(XcoderResidual):
+    def __init__(self, in_channels, out_channels, kernel_size, scale_factor=2, conv_type=ConvELU3D):
+        super(EncoderResidual, self).__init__(in_channels, out_channels, kernel_size,
+                                              conv_type=conv_type,
+                                              pre_conv=get_pooler(scale_factor))
+
+
+class DecoderResidual(XcoderResidual):
+    def __init__(self, in_channels, out_channels, kernel_size, scale_factor=2, conv_type=ConvELU3D):
+        super(DecoderResidual, self).__init__(in_channels, out_channels, kernel_size,
+                                              conv_type=conv_type,
+                                              post_conv=get_sampler(scale_factor))
+
+
+class BaseResidual(XcoderResidual):
+    def __init__(self, in_channels, out_channels, kernel_size, conv_type=ConvELU3D):
+        super(BaseResidual, self).__init__(in_channels, out_channels, kernel_size,
+                                           conv_type=conv_type,
+                                           pre_conv=get_pooler(scale_factor),
+                                           post_conv=get_sampler(scale_factor))
 
 
 class UNet3DMultiscale(UNetSkeletonMultiscale):

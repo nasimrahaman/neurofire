@@ -36,16 +36,11 @@ class Xcoder(nn.Module):
 class XcoderResidual(Xcoder):
     """
     Inspired by arXiv:1706.00120
+
     """
 
     def __init__(self, *super_args, **super_kwargs):
         super(XcoderResidual, self).__init__(*super_args, **super_kwargs)
-
-        # Legacy check:
-        self.residual_blocks = True
-        if "add_residual_connections" in super_kwargs:
-            self.residual_blocks = False
-            return
 
         # Add initial 2D convolution:
         if isinstance(self.kernel_size, int):
@@ -66,10 +61,7 @@ class XcoderResidual(Xcoder):
                                     kernel_size=self.kernel_size)
 
     def forward(self, input_):
-        # Legacy check:
-        if not self.residual_blocks:
-            return super(XcoderResidual, self).forward(input_)
-        
+        input_ = input_ if self.pre_conv is None else self.pre_conv(input_)
         conv1_out = self.conv1(input_)
         conv2_out = self.conv2(conv1_out)
         conv3_out = self.conv3(conv2_out)

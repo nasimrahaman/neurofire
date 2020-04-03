@@ -1,5 +1,4 @@
 import numbers
-import warnings
 
 import numpy as np
 import torch
@@ -259,11 +258,6 @@ class MaskTransitionToIgnoreLabel(Transform):
         assert segmentation.size(1) == 1, str(segmentation.size())
 
         # Get mask where we don't have ignore label
-        # # FIXME: volatile is ignored starting from pytorch 0.4
-        # with warnings.catch_warnings():
-        #     warnings.simplefilter('ignore')
-        #     dont_ignore_labels_mask_variable = Variable(segmentation.data.clone().ne_(self.ignore_label),
-        #                                             requires_grad=False, volatile=True)
         dont_ignore_labels_mask_variable = self.get_dont_ignore_labels_mask(segmentation, offset)
         dont_ignore_labels_mask_variable.requires_grad = False
 

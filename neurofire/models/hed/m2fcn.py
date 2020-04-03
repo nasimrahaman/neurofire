@@ -12,9 +12,7 @@ class M2FCN(nn.Module):
                  scale_factor=2,
                  block_type_key='default',
                  output_type_key='default',
-                 sampling_type_key='default',
-                 fuse_sub_networks=False):
-
+                 sampling_type_key='default'):
 
         assert isinstance(initial_num_fmaps, (list, tuple))
         super(M2FCN, self).__init__()
@@ -37,5 +35,4 @@ class M2FCN(nn.Module):
                 out.append(hed(x))
             else:
                 out.append(hed(out[-1][0]))
-
         return tuple(chain(*out))
