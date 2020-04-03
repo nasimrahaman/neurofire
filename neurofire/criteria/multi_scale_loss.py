@@ -8,7 +8,7 @@ class MultiScaleLoss(nn.Module):
     # Steffen's arguments `offsets` and `scale_facter` were never used
     def __init__(self, loss, n_scales=4, scale_weights=None, fill_missing_targets=False):
         super(MultiScaleLoss, self).__init__()
-        assert isinstance(loss, LossWrapper)
+        assert isinstance(loss, (LossWrapper, nn.Module))
         self.loss = loss
         self.n_scales = n_scales
         # per default, we weight each scale's loss with 1 / 4**scale_level i. (1, 1/4, 1/16, 1/128, ...)
@@ -23,7 +23,7 @@ class MultiScaleLoss(nn.Module):
         self.fill_missing_targets = fill_missing_targets
 
     def forward(self, predictions, targets):
-        assert isinstance(predictions, (list, tuple))
+        assert isinstance(predictions, (list, tuple)), type(predictions)
         assert len(predictions) == self.n_scales, "%i, %i" % (len(predictions), self.n_scales)
         same_len = len(predictions) == len(targets)
 
@@ -31,7 +31,8 @@ class MultiScaleLoss(nn.Module):
         # that produces predictions at the original scale. In this case, we can just fill up the missing
         # targets with the 0-level target. (only if fill_missing_targets == True)
         if not same_len:
-            assert self.fill_missing_targets and len(predictions) > len(targets)
+            assert self.fill_missing_targets and len(predictions) > len(targets), "%i, %i" % (len(predictions),
+                                                                                              len(targets))
             n_missing = len(predictions) - len(targets)
             targets = n_missing * [targets[0]] + targets
 

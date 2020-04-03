@@ -1,12 +1,10 @@
 import torch.nn as nn
-from inferno.extensions.layers.convolutional import ConvELU2D, Conv2D, BNReLUConv2D
+from inferno.extensions.layers.convolutional import ConvELU2D, BNReLUConv2D
 from inferno.extensions.layers.sampling import Upsample
 from .base import UNetSkeleton, Xcoder
-# from skunkworks.models.attention import SpatialAttentionELU2D
 
 CONV_TYPES = {'vanilla': ConvELU2D,
               'conv_bn': BNReLUConv2D}
-              # 'attention': SpatialAttentionELU2D}
 
 
 class Encoder(Xcoder):
@@ -46,9 +44,10 @@ class Base(Xcoder):
                                    post_conv=sample)
 
 
-class Output(Conv2D):
+class Output(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size):
-        super(Output, self).__init__(in_channels, out_channels, kernel_size)
+        super(Output, self).__init__(in_channels, out_channels, kernel_size,
+                                     padding=1)
 
 
 class UNet2D(UNetSkeleton):

@@ -432,3 +432,29 @@ class AddNoise(Transform):
         if self.apply_ in ('target', 'both'):
             target = self._noise(target)
         return prediction, target
+
+
+class AlignPredictionAndTarget(Transform):
+    def batch_function(self, tensors):
+        assert len(tensors) == 2
+        prediction, target = tensors
+        pshape = prediction.shape[2:]
+        tshape = target.shape[2:]
+
+        crop_target = any(tsh > psh for tsh, psh in zip(tshape, pshape))
+        crop_pred = any(psh > tsh for tsh, psh in zip(tshape, pshape))
+        if crop_target and crop_pred:
+            raise RuntimeError("Inconsistent target and prediction sizes")
+
+        if crop_target:
+            shape_diff = [(tsh - psh) // 2 for tsh, psh in zip(tshape, pshape)]
+            bb = tuple(slice(sd, tsh - sd) for sd, tsh in zip(shape_diff, tshape))
+            bb = np.s_[:, :] + bb
+            target = target[bb]
+        elif crop_pred:
+            shape_diff = [(psh - tsh) // 2 for tsh, psh in zip(tshape, pshape)]
+            bb = tuple(slice(sd, psh - sd) for sd, tsh in zip(shape_diff, tshape))
+            bb = np.s_[:, :] + bb
+            prediction = prediction[bb]
+
+        return prediction, target

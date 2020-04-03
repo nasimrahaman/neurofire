@@ -75,7 +75,7 @@ class DefectAugmentation(Transform):
 
         # set the params for the artifact source
         if p_artifact_source != 0:
-            assert isinstance(artifact_source, ArtifactSource)
+            assert isinstance(artifact_source, ArtifactSource), type(artifact_source)
             self.artifact_source = artifact_source
         self.contrast_scale = 0.1
 
@@ -117,7 +117,6 @@ class DefectAugmentation(Transform):
             section = self.undirected_deformation(section)
         return section
 
-    # FIXME these look better in the gunpowder impl !
     # this simulates a typical defect:
     # missing line of data with rest of data compressed towards the line
     def compress_section(self, section):
@@ -170,10 +169,11 @@ class DefectAugmentation(Transform):
 
         # apply the flow fields
         flow_x, flow_y = (x + flow_x).reshape(-1, 1), (y + flow_y).reshape(-1, 1)
-        #print(flow_x.shape)
-        #print(flow_y.shape)
+        # print(flow_x.shape)
+        # print(flow_y.shape)
+        cval = 0.0 if self.mean_val is None else self.mean_val
         section = map_coordinates(section, (flow_y, flow_x),
-                                  mode='constant', order=3).reshape(shape)
+                                  mode='constant', order=3, cval=cval).reshape(shape)
 
         # dilate the line mask and zero out the section below it
         line_mask = binary_dilation(line_mask, iterations=10)

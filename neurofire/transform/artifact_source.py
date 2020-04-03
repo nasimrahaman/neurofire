@@ -5,16 +5,20 @@ from inferno.io.volumetric import HDF5VolumeLoader
 from inferno.io.core import ZipReject
 from inferno.io.transform import Compose
 from inferno.io.transform.generic import Cast, Normalize, AsTorchBatch
-from inferno.io.transform.volume import RandomFlip3D
-from inferno.io.transform.image import RandomRotate, ElasticTransform
+from inferno.io.transform.image import RandomRotate, ElasticTransform, CenterCrop
 
 
-class RejectNonZeroThreshold(object):
+class RejectNonZeroThreshold:
+    """ Reject batches with insufficient foreground labels.
+
+    Arguments:
+        threshold [float] - the rejection thresold; batches with fraction of foreground
+            pixels smaller than this value will be rejected. Hence, the larger the
+            threshold, the more batches will be rejected.
+    """
     def __init__(self, threshold):
         self.threshold = threshold
 
-    # return True if ration of non-zeros is below
-    # the threshold and hence the batch should be rejected
     def __call__(self, fetched):
         return (np.count_nonzero(fetched) / fetched.size) < self.threshold
 
