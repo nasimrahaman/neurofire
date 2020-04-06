@@ -82,20 +82,26 @@ class RandomSlide(Transform):
         # Crop and return
         return image[slices]
 
-    def batch_function(self, volumes):
-        assert isinstance(volumes, (tuple, list))
-        shape = volumes[0].shape
-        if len(volumes) > 1:
-            assert all(vv.shape == shape for vv in volumes[1:]), "%s" % ", ".join(str(vv.shape) for vv in volumes)
+    def batch_function(self, tensors):
+        assert isinstance(tensors, (tuple, list))
+        tensors = list(tensors)
+
+        # Add channel dim to all tensors (if not present already):
+        assert all([vol.ndim in [3,4] for vol in tensors])
+        tensors = [vol if vol.ndim == 4 else np.expand_dims(vol, axis=0) for vol in tensors]
+
+        vol_shape = tensors[0].shape[1:]
+        if len(tensors) > 1:
+            assert all(tnsr.shape[1:] == vol_shape for tnsr in tensors[1:]), "%s" % ", ".join(str(tnsr.shape) for tnsr in tensors)
         # Build random variables
-        self.build_random_variables(num_planes=shape[0],
-                                    input_image_size=shape[1:])
+        self.build_random_variables(num_planes=vol_shape[0],
+                                    input_image_size=vol_shape[1:])
 
         # determine if we apply the transformation to the slide at all
         # TODO would be cleaner to integrate into `build random variables` as well
         apply_shift = np.random.rand() < self.apply_proba
 
-        apply_to = range(len(volumes)) if self._apply_to is None else self._apply_to
+        apply_to = range(len(tensors)) if self._apply_to is None else self._apply_to
 
         if apply_shift:
             # Get random variables
@@ -105,22 +111,22 @@ class RandomSlide(Transform):
                 # Shift
                 shift_at = self.get_random_variable('shift_at')
                 # Don't shift if plane_num doesn't equal shift_at
-                out_volumes = tuple(np.array([[self.shift_and_crop(image=plane,
+                out_tensors = tuple(np.array([[self.shift_and_crop(image=plane,
                                                                   zero_shift=(plane_num != shift_at) or
                                                                              (nb_tnsr not in apply_to))
                                              for plane_num, plane in enumerate(vv)] for vv in tnsr])
-                             for nb_tnsr, tnsr in enumerate(volumes))
+                             for nb_tnsr, tnsr in enumerate(tensors))
             else:
                 # Slide
                 slide_from = self.get_random_variable('slide_from')
                 # Don't shift if plane_num isn't larger than or equal to slide_from
-                out_volumes = tuple(np.array([[self.shift_and_crop(image=plane,
+                out_tensors = tuple(np.array([[self.shift_and_crop(image=plane,
                                                                   zero_shift=(plane_num < slide_from))
-                                             for plane_num, plane in enumerate(vv)] for vv in tnsr]) for nb_tnsr, tnsr in enumerate(volumes))
+                                             for plane_num, plane in enumerate(vv)] for vv in tnsr]) for nb_tnsr, tnsr in enumerate(tensors))
         else:
-            out_volumes = tuple(np.array([[self.shift_and_crop(image=plane, zero_shift=True)
-                                         for plane in vv] for vv in tnsr]) for tnsr in volumes)
-        return out_volumes
+            out_tensors = tuple(np.array([[self.shift_and_crop(image=plane, zero_shift=True)
+                                         for plane in vv] for vv in tnsr]) for tnsr in tensors)
+        return out_tensors
 
 
 class RejectNonZeroThreshold(object):
