@@ -128,6 +128,9 @@ class RawVolumeWithDefectAugmentation(RawVolume):
         self.defect_augmentation = DefectAugmentation.from_config(defect_augmentation_config)
         self.cast = Cast(self.dtype)
 
+        # Check if we should keep track of defected slices:
+        self.keep_track_defected_slices = len(self.defect_augmentation.keep_track_of) > 0
+
     def __getitem__(self, index):
         # Casting to int would allow index to be IndexSpec objects.
         index = int(index)
@@ -145,7 +148,13 @@ class RawVolumeWithDefectAugmentation(RawVolume):
 
         # apply the normal transformations (including normalization)
         if self.transforms is not None:
-            vol = self.transforms(vol)
+            if self.keep_track_defected_slices:
+                if isinstance(vol, tuple):
+                    vol = list(vol)
+                assert isinstance(vol, list)
+                vol[0] = self.transforms(vol[0])
+            else:
+                vol = self.transforms(vol)
 
         if self.return_index_spec:
             return vol, IndexSpec(index=index, base_sequence_at_index=slices)
